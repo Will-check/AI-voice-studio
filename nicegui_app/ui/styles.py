@@ -1,0 +1,12 @@
+class Style:
+    standard_label = "font-semibold text-gray-700 w-full text-center"
+    list_header_center = "font-bold text-center"
+    list_header_left = "font-bold text-left"
+    centered_row = "w-full flex justify-center"
+    standard_border = "w-full border p-4 border-gray-200 rounded-xl shadow-md gap-4"
+    small_button = "h-10 font-bold text-sm rounded-lg shadow-md"
+    large_button = "h-12 font-bold text-base rounded-lg shadow-md"
+    menu_line = "w-full border-b border-gray-300"
+    half_screen_column = "w-full md:w-[calc(50%-12px)]"
+    slider_box = "w-full mt-0 p-2 bg-gray-50 rounded-lg border border-gray-100"
+    flex_between_centered = "items-center justify-between w-full"
