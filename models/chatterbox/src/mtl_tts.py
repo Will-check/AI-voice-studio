@@ -274,16 +274,11 @@ class ChatterboxMultilingualTTS:
         text_tokens = F.pad(text_tokens, (1, 0), value=sot)
         text_tokens = F.pad(text_tokens, (0, 1), value=eot)
 
-        # Calculate approx needed tokens
-        approx_needed = len(text) * 3 # rough approx 3 tokens per char
-        approx_needed = int(approx_needed * 1.2) # add 20% buffer
-        max_new = min(1200, max(250, approx_needed)) # cap at 1200
-        print(f"📝 Text length: {len(text)} chars, generating approx {max_new} tokens.")
         with torch.inference_mode():
             speech_tokens = self.t3.inference(
                 t3_cond=self.conds.t3,
                 text_tokens=text_tokens,
-                max_new_tokens=max_new,
+                max_new_tokens=1000,  # TODO: use the value in config
                 temperature=temperature,
                 cfg_weight=cfg_weight,
                 repetition_penalty=repetition_penalty,
