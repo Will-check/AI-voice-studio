@@ -2,6 +2,7 @@ from nicegui import ui
 from nicegui_app.ui.common_ui import handle_file_upload, handle_reset
 from nicegui_app.ui.styles import Style
 from nicegui_app.logic.common_logic import update_audio_dropdown, load_audio_to_player
+from nicegui_app.models.chatterbox import exaggeration, pace, temperature
 
 
 def chatterbox_controls():
@@ -159,13 +160,21 @@ def chatterbox_controls():
 
         create_labeled_slider(
             "Exaggeration (Neutral = 0.5, extreme values can be unstable)",
-            0.25,
-            2.0,
-            0.05,
-            0.5,
+            exaggeration["min"],
+            exaggeration["max"],
+            exaggeration["step"],
+            exaggeration["default"],
         )
-        create_labeled_slider("CFG/Pace", 0., 1.0, 0.05, 0.5)
-        create_labeled_slider("Temperature", 0.05, 5.0, 0.05, 0.8)
+        create_labeled_slider(
+            "CFG/Pace", pace["min"], pace["max"], pace["step"], pace["default"]
+        )
+        create_labeled_slider(
+            "Temperature",
+            temperature["min"],
+            temperature["max"],
+            temperature["step"],
+            temperature["default"],
+        )
 
         DEFAULT_SEED_VALUE = 0
         with ui.column().classes(
