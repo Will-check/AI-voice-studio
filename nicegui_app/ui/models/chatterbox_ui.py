@@ -2,7 +2,7 @@ from nicegui import ui
 from nicegui_app.ui.common_ui import handle_file_upload, handle_reset
 from nicegui_app.ui.styles import Style
 from nicegui_app.logic.common_logic import update_audio_dropdown, load_audio_to_player
-from nicegui_app.models.chatterbox import exaggeration, pace, temperature
+from nicegui_app.models.chatterbox_wrapper import exaggeration, cfg, temperature, top_p, min_p, repetition_penalty
 
 
 def chatterbox_controls():
@@ -159,21 +159,45 @@ def chatterbox_controls():
                 number_input.bind_value_to(slider, "value")
 
         create_labeled_slider(
-            "Exaggeration (Neutral = 0.5, extreme values can be unstable)",
+            exaggeration["label"],
             exaggeration["min"],
             exaggeration["max"],
             exaggeration["step"],
             exaggeration["default"],
         )
         create_labeled_slider(
-            "CFG/Pace", pace["min"], pace["max"], pace["step"], pace["default"]
+            cfg["label"], cfg["min"], cfg["max"], cfg["step"], cfg["default"]
         )
         create_labeled_slider(
-            "Temperature",
+            temperature["label"],
             temperature["min"],
             temperature["max"],
             temperature["step"],
             temperature["default"],
+        )
+
+        create_labeled_slider(
+            top_p["label"],
+            top_p["min"],
+            top_p["max"],
+            top_p["step"],
+            top_p["default"],
+        )
+
+        create_labeled_slider(
+            min_p["label"],
+            min_p["min"],
+            min_p["max"],
+            min_p["step"],
+            min_p["default"],
+        )
+
+        create_labeled_slider(
+            repetition_penalty["label"],
+            repetition_penalty["min"],
+            repetition_penalty["max"],
+            repetition_penalty["step"],
+            repetition_penalty["default"],
         )
 
         DEFAULT_SEED_VALUE = 0

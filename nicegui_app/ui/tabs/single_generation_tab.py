@@ -2,7 +2,7 @@ from nicegui import ui
 from nicegui_app.ui.models.chatterbox_ui import chatterbox_controls
 from nicegui_app.logic.app_state import get_state
 from nicegui_app.ui.styles import Style
-from nicegui_app.models.chatterbox import LANGUAGES
+from nicegui_app.models.chatterbox_wrapper import LANGUAGES
 
 
 def single_generation_tab(tab_object: ui.tab):

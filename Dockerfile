@@ -22,7 +22,8 @@ ENV PATH="/opt/conda/envs/ai-voice-studio/bin:$PATH"
 WORKDIR /tmp/build
 
 # Chatterbox instalation
-COPY models/chatterbox ./models/chatterbox
+COPY models/chatterbox/pyproject.toml ./models/chatterbox/
+COPY models/chatterbox/src ./models/chatterbox/src/chatterbox/
 
 # Install project and clean cache
 RUN pip install ./models/chatterbox && \
@@ -33,8 +34,7 @@ RUN pip install ./models/chatterbox && \
 COPY requirements.txt .
 RUN pip install -r requirements.txt && \
     rm -rf /root/.cache/pip && \
-    rm -rf /tmp/* && \
-    rm -rf /tmp/build
+    rm -rf /tmp/*
 
 WORKDIR /app
 
