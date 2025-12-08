@@ -2,10 +2,19 @@ from nicegui import ui
 from nicegui_app.ui.common_ui import handle_file_upload, handle_reset
 from nicegui_app.ui.styles import Style
 from nicegui_app.logic.common_logic import update_audio_dropdown, load_audio_to_player
-from nicegui_app.models.chatterbox_wrapper import exaggeration, cfg, temperature, top_p, min_p, repetition_penalty
+from nicegui_app.models.chatterbox_wrapper import (
+    exaggeration,
+    cfg,
+    temperature,
+    top_p,
+    min_p,
+    repetition_penalty,
+)
 
 
 def chatterbox_controls():
+    controls = {}
+
     with ui.column().classes(Style.standard_border):
         ui.label("Saved Voice Profiles").classes(Style.standard_label)
         profile_select = (
@@ -39,6 +48,8 @@ def chatterbox_controls():
                 reference_audio_player_container.visible = False
                 with ui.row().classes(Style.flex_between_centered):
                     audio_player = ui.audio("").classes("flex-grow")
+                    controls["audio_player"] = audio_player
+
                     ui.icon("clear", size="sm").classes(
                         "text-gray-500 hover:text-red-500 cursor-pointer"
                     ).tooltip("Clear reference audio").on(
@@ -118,7 +129,9 @@ def chatterbox_controls():
                 uploader.on("click", lambda: uploader.run_method("pickFiles"))
 
         # Sliders for Generation Control
-        def create_labeled_slider(label_text, min_val, max_val, step, default_val):
+        def create_labeled_slider(
+            key_name, label_text, min_val, max_val, step, default_val
+        ):
             def reset_slider(target_slider, target_input, default_value):
                 target_slider.value = default_value
                 target_input.value = default_value
@@ -157,8 +170,10 @@ def chatterbox_controls():
 
                 slider.bind_value_to(number_input, "value")
                 number_input.bind_value_to(slider, "value")
+                controls[key_name] = slider
 
         create_labeled_slider(
+            "exaggeration",
             exaggeration["label"],
             exaggeration["min"],
             exaggeration["max"],
@@ -166,9 +181,10 @@ def chatterbox_controls():
             exaggeration["default"],
         )
         create_labeled_slider(
-            cfg["label"], cfg["min"], cfg["max"], cfg["step"], cfg["default"]
+            "cfg", cfg["label"], cfg["min"], cfg["max"], cfg["step"], cfg["default"]
         )
         create_labeled_slider(
+            "temperature",
             temperature["label"],
             temperature["min"],
             temperature["max"],
@@ -177,6 +193,7 @@ def chatterbox_controls():
         )
 
         create_labeled_slider(
+            "top_p",
             top_p["label"],
             top_p["min"],
             top_p["max"],
@@ -185,6 +202,7 @@ def chatterbox_controls():
         )
 
         create_labeled_slider(
+            "min_p",
             min_p["label"],
             min_p["min"],
             min_p["max"],
@@ -193,6 +211,7 @@ def chatterbox_controls():
         )
 
         create_labeled_slider(
+            "repetition_penality",
             repetition_penalty["label"],
             repetition_penalty["min"],
             repetition_penalty["max"],
@@ -207,6 +226,11 @@ def chatterbox_controls():
             with ui.row().classes(Style.flex_between_centered):
                 ui.label("Seed (0 for random)").classes("text-sm")
 
-            ui.number(
-                value=DEFAULT_SEED_VALUE, min=0, step=1, label="Seed Value"
-            ).classes("w-full").props("dense outlined no-spinners")
+            seed_input = (
+                ui.number(value=DEFAULT_SEED_VALUE, min=0, step=1, label="Seed Value")
+                .classes("w-full")
+                .props("dense outlined no-spinners")
+            )
+            controls["seed"] = seed_input
+
+    return controls

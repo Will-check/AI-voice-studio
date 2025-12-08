@@ -1,8 +1,75 @@
-from nicegui import ui
+import io
+import base64
+import scipy.io.wavfile
+
+from nicegui import ui, run
 from nicegui_app.ui.models.chatterbox_ui import chatterbox_controls
 from nicegui_app.logic.app_state import get_state
 from nicegui_app.ui.styles import Style
-from nicegui_app.models.chatterbox_wrapper import LANGUAGES
+from nicegui_app.models.chatterbox_wrapper import (
+    LANGUAGES,
+    MAX_CHARS,
+    generate_tts_audio,
+)
+
+
+async def handle_generation_logic(
+    text_component: ui.textarea,
+    language_component: ui.select,
+    controls_dict: dict,
+    audio_player_component: ui.audio,
+):
+    text = text_component.value
+    if not text:
+        ui.notify("Please enter text to synthesize.", type="warning")
+        return
+
+    language = language_component.value
+    if not language:
+        ui.notify("Please select a language.", type="warning")
+        return
+
+    ref_player = controls_dict.get("audio_player")
+    if not ref_player or not ref_player.source:
+        ui.notify("Please select or upload a reference audio.", type="warning")
+        return
+
+    audio_prompt_path = ref_player.source
+
+    try:
+        exaggeration_val = controls_dict["exaggeration"].value
+        temperature_val = controls_dict["temperature"].value
+        cfg_val = controls_dict["cfg"].value
+        seed_val = int(controls_dict["seed"].value)
+    except KeyError as e:
+        ui.notify(f"Missing control {e}", type="negative")
+        return
+
+    ui.notify("Starting generation...", type="info")
+
+    try:
+        sr, wav_data = await run.io_bound(
+            generate_tts_audio,
+            text_input=text,
+            language_id=language,
+            audio_prompt_path_input=audio_prompt_path,
+            exaggeration_input=exaggeration_val,
+            temperature_input=temperature_val,
+            seed_num_input=seed_val,
+            cfg_input=cfg_val,
+        )
+
+        byte_io = io.BytesIO()
+        scipy.io.wavfile.write(byte_io, sr, wav_data)
+        wav_bytes = byte_io.getvalue()
+        base64_audio = base64.b64encode(wav_bytes).decode("ascii")
+
+        audio_player_component.set_source(f"data:audio/wav;base64,{base64_audio}")
+        ui.notify("Audio generated successfully!", type="positive")
+
+    except Exception as e:
+        ui.notify(f"Error during generation: {str(e)}", type="negative")
+        print(f"Generation Error: {e}")
 
 
 def single_generation_tab(tab_object: ui.tab):
@@ -40,7 +107,7 @@ def single_generation_tab(tab_object: ui.tab):
 
             # --- Left Column: Controls for Chatterbox
             with left_column_chatterbox:
-                chatterbox_controls()
+                chatterbox_ui_controls = chatterbox_controls()
 
             # --- Right Column: Input and Output
             with ui.column().classes(Style.half_screen_column):
@@ -48,12 +115,14 @@ def single_generation_tab(tab_object: ui.tab):
                 with ui.column().classes(Style.standard_border + " gap-6"):
 
                     # 1. Text Input Area
-                    ui.label("Text to synthesize (max: chars 300)").classes(
+                    ui.label(f"Text to synthesize (max: chars {MAX_CHARS})").classes(
                         Style.standard_label
                     )
-                    ui.textarea(placeholder="Enter text here...").props(
-                        "rows=4 outlined dense"
-                    ).classes("w-full h-24")
+                    text_input_area = (
+                        ui.textarea(placeholder="Enter text here...")
+                        .props("rows=4 outlined dense")
+                        .classes("w-full h-24")
+                    )
 
                     # 2. Language Dropdown
                     ui.label("Language").classes(Style.standard_label)
@@ -93,13 +162,16 @@ def single_generation_tab(tab_object: ui.tab):
                     )
 
                     ui.label("Output Audio").classes(Style.standard_label)
-                    ui.audio("").classes("w-full")
+                    output_audio_player = ui.audio("").classes("w-full")
 
                     generate_button = (
                         ui.button(
                             "Generate",
-                            on_click=lambda: ui.notify(
-                                "Starting generation...", type="info"
+                            on_click=lambda: handle_generation_logic(
+                                text_component=text_input_area,
+                                language_component=language_dropdown,
+                                controls_dict=chatterbox_ui_controls,
+                                audio_player_component=output_audio_player,
                             ),
                         )
                         .classes(Style.small_button + " w-full")
