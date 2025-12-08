@@ -133,7 +133,7 @@ def chatterbox_controls():
                                 min=min_val,
                                 max=max_val,
                                 step=step,
-                                format="%.1f",
+                                format="%.2f",
                             )
                             .classes("w-14")
                             .props("dense outlined input-class=text-center")
@@ -159,14 +159,13 @@ def chatterbox_controls():
 
         create_labeled_slider(
             "Exaggeration (Neutral = 0.5, extreme values can be unstable)",
-            0.0,
-            1.0,
-            0.1,
+            0.25,
+            2.0,
+            0.05,
             0.5,
         )
-        create_labeled_slider("CFG/Pace", 0.0, 1.0, 0.1, 0.5)
-        create_labeled_slider("CFG/Peace", 0.0, 1.0, 0.1, 0.5)
-        create_labeled_slider("Temperature", 0.0, 1.0, 0.1, 0.8)
+        create_labeled_slider("CFG/Pace", 0., 1.0, 0.05, 0.5)
+        create_labeled_slider("Temperature", 0.05, 5.0, 0.05, 0.8)
 
         DEFAULT_SEED_VALUE = 0
         with ui.column().classes(
