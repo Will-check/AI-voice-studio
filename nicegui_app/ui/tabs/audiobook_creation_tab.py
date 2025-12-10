@@ -1,4 +1,7 @@
 from nicegui import ui
+from nicegui_app.logic.app_state import get_state
+from nicegui_app.ui.common_ui import get_bound_model_column
+from nicegui_app.ui.models.chatterbox_ui import chatterbox_controls
 from nicegui_app.ui.styles import Style
 import re
 
@@ -208,6 +211,7 @@ def speaker_row(
 
 
 def audiobook_creation_tab(tab_object: ui.tab):
+    app_state = get_state()
     voice_options = ["", "Voice A (M)", "Voice B (F)", "Voice C (Child)"]
 
     with ui.tab_panel(tab_object).classes("w-full p-0 m-0"):
@@ -280,25 +284,36 @@ def audiobook_creation_tab(tab_object: ui.tab):
                                 ),
                             ).classes("w-full mt-2").props("color=red")
 
-            with ui.row().classes(Style.centered_row + " pt-4"):
-                ui.label("Output Audio").classes(Style.standard_label)
-                ui.audio("").classes("w-full")
+            with ui.row().classes("w-full gap-6"):
+                get_bound_model_column(app_state, model_name=None)
+                with get_bound_model_column(app_state, "Chatterbox"):
+                    chatterbox_ui_controls = chatterbox_controls()
 
-            with ui.row().classes(Style.centered_row + " pt-4"):
-                ui.button(
-                    "Create audio parts",
-                    on_click=lambda: generate_lines_list(
-                        text_input,
-                        lines_list_container,
-                        voice_options,
-                        speaker_list_container,
-                    ),
-                ).classes(Style.large_button + " flex-grow").props("color=indigo")
-                ui.button(
-                    "Merge audio parts",
-                    on_click=lambda: ui.notify(
-                        "Merge audio parts - not implemented yet!"
-                    ),
-                ).classes(Style.large_button + " flex-grow").props("color=indigo")
+                with ui.column().classes(Style.half_screen_column):
+                    with ui.card().classes(Style.standard_border):
+                        with ui.row().classes(Style.centered_row + " pt-4"):
+                            ui.label("Output Audio").classes(Style.standard_label)
+                            ui.audio("").classes("w-full")
 
-            lines_list_container = ui.column().classes("w-full mt-4")
+                        with ui.row().classes(Style.centered_row + " pt-4"):
+                            ui.button(
+                                "Create audio parts",
+                                on_click=lambda: generate_lines_list(
+                                    text_input,
+                                    lines_list_container,
+                                    voice_options,
+                                    speaker_list_container,
+                                ),
+                            ).classes(Style.small_button + " flex-grow").props(
+                                "color=indigo"
+                            )
+                            ui.button(
+                                "Merge audio parts",
+                                on_click=lambda: ui.notify(
+                                    "Merge audio parts - not implemented yet!"
+                                ),
+                            ).classes(Style.small_button + " flex-grow").props(
+                                "color=indigo"
+                            )
+
+                        lines_list_container = ui.column().classes("w-full mt-4")

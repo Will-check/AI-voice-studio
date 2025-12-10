@@ -12,7 +12,7 @@ def render_empty_model_state():
         Style.standard_border + " items-center justify-center h-[470px]"
     ):
         ui.icon("info", size="2xl").classes("text-orange-500")
-        ui.label("No Model Selected").classes("font-bold text-xl text-gray-700")
+        ui.label("No Model Selected").classes("text-xl font-bold text-gray-700")
         ui.label(
             "Please select a valid model from the dropdown menu to enable specific controls."
         ).classes("text-center text-gray-500")
@@ -27,11 +27,12 @@ def get_bound_model_column(app_state, model_name: str = None):
     else:
         is_no_model = lambda v: v == "No Model Selected"
         column.bind_visibility_from(app_state, "active_model", is_no_model)
-        
+
         with column:
             render_empty_model_state()
 
     return column
+
 
 def handle_reset(
     upload_component,

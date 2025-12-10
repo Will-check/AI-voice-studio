@@ -3,15 +3,15 @@ import base64
 import scipy.io.wavfile
 
 from nicegui import ui, run
-from nicegui_app.ui.models.chatterbox_ui import chatterbox_controls
 from nicegui_app.logic.app_state import get_state
-from nicegui_app.ui.styles import Style
-from nicegui_app.ui.common_ui import get_bound_model_column, render_empty_model_state
 from nicegui_app.models.chatterbox_wrapper import (
     LANGUAGES,
     MAX_CHARS,
     generate_tts_audio,
 )
+from nicegui_app.ui.common_ui import get_bound_model_column
+from nicegui_app.ui.models.chatterbox_ui import chatterbox_controls
+from nicegui_app.ui.styles import Style
 
 
 async def handle_generation_logic(
