@@ -287,7 +287,9 @@ def audiobook_creation_tab(tab_object: ui.tab):
             with ui.row().classes("w-full gap-6"):
                 get_bound_model_column(app_state, model_name=None)
                 with get_bound_model_column(app_state, "Chatterbox"):
-                    chatterbox_ui_controls = chatterbox_controls()
+                    chatterbox_ui_controls = chatterbox_controls(
+                        include_audio_input=False
+                    )
 
                 with ui.column().classes(Style.half_screen_column):
                     with ui.card().classes(Style.standard_border):

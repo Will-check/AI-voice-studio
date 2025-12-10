@@ -1,5 +1,6 @@
 from nicegui import ui
 from nicegui_app.ui.styles import Style
+from nicegui_app.logic.common_logic import update_audio_dropdown, load_audio_to_player
 import os
 
 
@@ -34,12 +35,25 @@ def get_bound_model_column(app_state, model_name: str = None):
     return column
 
 
+def render_saved_profiles_dropdown():
+    ui.label("Saved Voice Profiles").classes(Style.standard_label)
+    profile_select = (
+        ui.select(
+            options={},
+            label="Select Profile",
+        )
+        .classes("w-full mb-4")
+        .props("outlined dense")
+    )
+    update_audio_dropdown(profile_select)
+    return profile_select
+
+
 def handle_reset(
     upload_component,
     player_container,
     audio_player,
-    profile_select=None,
-    model_profile_select=None,
+    dropdowns_list=None,
 ):
     client_id = ui.context.client.id
     if client_id in temp_audio_files and os.path.exists(temp_audio_files[client_id]):
@@ -59,13 +73,90 @@ def handle_reset(
     upload_component.visible = True
     upload_component.update()
 
-    if profile_select:
-        profile_select.value = None
-        profile_select.update()
+    if dropdowns_list:
+        for dropdown in dropdowns_list:
+            dropdown.value = None
+            dropdown.update()
 
-    if model_profile_select:
-        model_profile_select.value = None
-        model_profile_select.update()
+
+def render_reference_audio_component(
+    controls, profile_select=None, external_dropdowns=None
+):
+    if external_dropdowns is None:
+        external_dropdowns = []
+
+    ui.label("Reference Audio").classes(Style.standard_label)
+
+    with ui.column().classes("relative w-full"):
+        uploader_container = ui.element("div").classes("relative w-full h-40 group")
+
+        with ui.row().classes("w-full") as player_container_row:
+            player_container_row.visible = False
+            with ui.row().classes(Style.flex_between_centered):
+                audio_player = ui.audio("").classes("flex-grow")
+                controls["audio_player"] = audio_player
+
+                def on_clear_click():
+                    dropdowns_to_reset = []
+                    if profile_select:
+                        dropdowns_to_reset.append(profile_select)
+                    dropdowns_to_reset.extend(external_dropdowns)
+
+                    handle_reset(
+                        uploader_container,
+                        player_container_row,
+                        audio_player,
+                        dropdowns_to_reset,
+                    )
+
+                ui.icon("clear", size="sm").classes(
+                    "text-gray-500 hover:text-red-500 cursor-pointer"
+                ).tooltip("Clear reference audio").on("click", on_clear_click)
+
+        with uploader_container:
+            with ui.column().classes(
+                "w-full h-full border-2 border-dashed border-slate-300 rounded-lg "
+                "items-center justify-center bg-slate-50 transition-colors "
+                "group-hover:bg-slate-100 group-hover:border-slate-400 gap-1"
+            ):
+                ui.icon("cloud_upload", size="2rem", color="slate-400").classes(
+                    "transition-transform group-hover:scale-110"
+                )
+                ui.label("Drop Audio Here").classes(
+                    "text-slate-500 text-base font-medium"
+                )
+                ui.label("- or -").classes("text-xs text-slate-300")
+                ui.label("CLICK TO UPLOAD").classes("text-sm font-bold text-orange-400")
+
+            async def on_upload_handler(e):
+                if profile_select:
+                    profile_select.value = None
+                for d in external_dropdowns:
+                    d.value = None
+
+                await handle_file_upload(
+                    e, uploader_container, player_container_row, audio_player
+                )
+
+            uploader = (
+                ui.upload(
+                    auto_upload=True,
+                    on_upload=on_upload_handler,
+                    on_rejected=lambda: ui.notify(
+                        "Invalid file format. Supported: MP3, WAV, FLAC.",
+                        type="negative",
+                    ),
+                    max_files=1,
+                    max_file_size=10_000_000,
+                )
+                .props(
+                    'flat no-shadow accept=".mp3,.wav,.flac,audio/*" hide-upload-btn'
+                )
+                .classes("absolute inset-0 z-10 w-full h-full opacity-0 cursor-pointer")
+            )
+            uploader.on("click", lambda: uploader.run_method("pickFiles"))
+
+    return audio_player, uploader_container, player_container_row
 
 
 async def handle_file_upload(
