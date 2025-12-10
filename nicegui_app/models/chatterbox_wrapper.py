@@ -109,6 +109,9 @@ def generate_tts_audio(
     temperature_input: float = 0.8,
     seed_num_input: int = 0,
     cfg_input: float = 0.5,
+    repetition_penalty_input=2.0,
+    min_p_input=0.05,
+    top_p_input=1.0
 ):
     current_model = get_or_load_model()
 
@@ -120,17 +123,24 @@ def generate_tts_audio(
 
     print(f"Generating audio for text: '{text_input[:50]}...'")
 
-    generate_kwargs = {
-        "exaggeration": exaggeration_input,
-        "temperature": temperature_input,
-        "cfg_weight": cfg_input,
-        "audio_prompt_path": audio_prompt_path_input,
-    }
+    print("exaggeration_input:", exaggeration_input)
+    print("temperature_input:", temperature_input)
+    print("seed_num_input:", seed_num_input)
+    print("cfg_input:", cfg_input)
+    print("repetition_penalty_input:", repetition_penalty_input)
+    print("min_p_input:", min_p_input)
+    print("top_p_input:", top_p_input)
 
     raw_wav = current_model.generate(
         text_input[:MAX_CHARS],  # Truncate text to max chars
         language_id=language_id,
-        **generate_kwargs,
+        audio_prompt_path=audio_prompt_path_input,
+        exaggeration=exaggeration_input,
+        cfg_weight=cfg_input,
+        temperature=temperature_input,
+        repetition_penalty=repetition_penalty_input,
+        min_p=min_p_input,
+        top_p=top_p_input,
     )
 
     wav = raw_wav.squeeze(0).numpy()

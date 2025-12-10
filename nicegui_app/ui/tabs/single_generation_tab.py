@@ -42,6 +42,9 @@ async def handle_generation_logic(
         temperature_val = controls_dict["temperature"].value
         cfg_val = controls_dict["cfg"].value
         seed_val = int(controls_dict["seed"].value)
+        top_p_val = controls_dict["top_p"].value
+        min_p_val= controls_dict["min_p"].value
+        rep_penalty_val = controls_dict["repetition_penalty"].value
     except KeyError as e:
         ui.notify(f"Missing control {e}", type="negative")
         return
@@ -58,6 +61,9 @@ async def handle_generation_logic(
             temperature_input=temperature_val,
             seed_num_input=seed_val,
             cfg_input=cfg_val,
+            repetition_penalty_input=rep_penalty_val,
+            min_p_input=min_p_val,
+            top_p_input=top_p_val
         )
 
         byte_io = io.BytesIO()

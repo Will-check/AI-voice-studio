@@ -97,7 +97,7 @@ def _render_chatterbox_sliders(controls):
     )
 
     create_labeled_slider(
-        "repetition_penality",
+        "repetition_penalty",
         repetition_penalty["label"],
         repetition_penalty["min"],
         repetition_penalty["max"],
