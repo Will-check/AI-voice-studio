@@ -49,7 +49,8 @@ def load_audio_to_player(
 ):
     selected_path = event.value
     if selected_path:
-        audio_player.source = selected_path
+        web_source = selected_path.replace("./", "/")
+        audio_player.source = web_source
         audio_player.update()
 
         player_container.visible = True

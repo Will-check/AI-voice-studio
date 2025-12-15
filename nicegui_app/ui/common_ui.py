@@ -35,14 +35,13 @@ def get_bound_model_column(app_state, model_name: str = None):
     return column
 
 
-def render_saved_profiles_dropdown():
-    ui.label("Saved Voice Profiles").classes(Style.standard_label)
+def render_saved_profiles_dropdown(classes = ""):
     profile_select = (
         ui.select(
             options={},
             label="Select Profile",
         )
-        .classes("w-full mb-4")
+        .classes(classes)
         .props("outlined dense")
     )
     update_audio_dropdown(profile_select)

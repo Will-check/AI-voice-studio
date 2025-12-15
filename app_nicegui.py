@@ -4,10 +4,9 @@ from nicegui_app.ui.tabs.single_generation_tab import single_generation_tab
 from nicegui_app.ui.tabs.audiobook_creation_tab import audiobook_creation_tab
 from nicegui_app.logic.app_state import AppState, get_state
 from nicegui_app.ui.styles import Style
-from nicegui_app.logic.common_logic import DEFAULT_VOICE_LIBRARY
 
 
-app.add_static_files(DEFAULT_VOICE_LIBRARY, DEFAULT_VOICE_LIBRARY)
+app.add_static_files("/voice_library", "voice_library")
 
 app_state = get_state()
 
@@ -91,7 +90,7 @@ with ui.column().classes("w-full gap-5 px-5"):
         ).classes("w-48 h-12 ml-6 ml-auto").props("dense outlined color=indigo")
 
     # 3. Content Panels
-    with ui.tab_panels(tabs, value=tab_gen).classes("w-full"):
+    with ui.tab_panels(tabs, value=tab_audio).classes("w-full"):
         single_generation_tab(tab_gen)
         audiobook_creation_tab(tab_audio)
 

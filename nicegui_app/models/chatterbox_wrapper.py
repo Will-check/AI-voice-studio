@@ -145,5 +145,8 @@ def generate_tts_audio(
 
     wav = raw_wav.squeeze(0).numpy()
 
+    if torch.cuda.is_available():
+        print("Clearing CUDA cache...")
+        torch.cuda.empty_cache()
     print("Audio generation complete.")
     return (current_model.sr, wav)

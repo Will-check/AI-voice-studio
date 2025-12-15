@@ -125,7 +125,8 @@ def chatterbox_controls(include_audio_input=True):
 
     with ui.column().classes(Style.standard_border):
         if include_audio_input:
-            profile_select = render_saved_profiles_dropdown()
+            ui.label("Saved Voice Profiles").classes(Style.standard_label)
+            profile_select = render_saved_profiles_dropdown("w-full mb-4")
 
             ui.label("Default Model Voices").classes(Style.standard_label)
             model_voices_select = (

@@ -35,7 +35,7 @@ async def handle_generation_logic(
         ui.notify("Please select or upload a reference audio.", type="warning")
         return
 
-    audio_prompt_path = ref_player.source
+    audio_prompt_path = ref_player.source.lstrip("/")
 
     try:
         exaggeration_val = controls_dict["exaggeration"].value
