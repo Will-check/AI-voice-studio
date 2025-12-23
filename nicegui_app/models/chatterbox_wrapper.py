@@ -66,7 +66,7 @@ min_p = {
 repetition_penalty = {
     "min": 1.0,
     "max": 2.0,
-    "default": 1.2,
+    "default": 1.5,
     "step": 0.05,
     "label": "Repetition Penalty",
 }

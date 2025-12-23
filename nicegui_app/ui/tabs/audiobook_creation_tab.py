@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from typing import Optional, List, Dict
 
-from nicegui import ui
+from nicegui import ui, run
 from nicegui_app.logic.app_state import get_state
 from nicegui_app.models.chatterbox_wrapper import generate_tts_audio, LANGUAGES
 from nicegui_app.logic.common_logic import (
@@ -40,6 +40,44 @@ def _ensure_project_exists(project_name: str, directory_path: str = DEFAULT_PROJ
         ui.notify(f"Created new project: {project_name}", type="positive")
 
 
+def _load_project_metadata(project_name: str) -> List[LineData]:
+    if not project_name:
+        return []
+
+    project_path = os.path.join(DEFAULT_PROJECT_DIRECTORY, project_name)
+    metadata_path = os.path.join(project_path, "metadata.json")
+
+    if not os.path.exists(metadata_path):
+        return []
+
+    try:
+        with open(metadata_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        
+        return [
+            LineData(
+                speaker=entry.get("speaker", "Unknown"),
+                text=entry.get("text", ""),
+                voice=entry.get("voice"),
+                file_name=entry.get("file_name"),
+                pause=entry.get("pause", 0.5)
+            )
+            for entry in data
+        ]
+    except Exception as e:
+        ui.notify(f"Error loading metadata: {e}", type="negative")
+        return []
+    
+
+def on_project_change(event, lines_container: ui.column, directory_path: str = DEFAULT_PROJECT_DIRECTORY):
+    project_name = event.value
+
+    _ensure_project_exists(project_name=project_name)
+
+    loaded_lines = _load_project_metadata(project_name)
+    _render_lines_grid(lines_container, loaded_lines)
+
+
 def get_existing_projects(directory_path: str = DEFAULT_PROJECT_DIRECTORY) -> List[str]:
     if not os.path.isdir(directory_path):
         os.makedirs(directory_path)
@@ -50,14 +88,6 @@ def get_existing_projects(directory_path: str = DEFAULT_PROJECT_DIRECTORY) -> Li
     ]
 
     return projects_list
-
-def on_project_change(event, lines_container: ui.column, directory_path: str = DEFAULT_PROJECT_DIRECTORY):
-    project_name = event.value
-
-    _ensure_project_exists(project_name=project_name)
-
-    loaded_lines = _load_project_metadata(project_name)
-    _render_lines_grid(lines_container, loaded_lines)
 
 
 def refresh_project_options(select_element: ui.select):
@@ -173,22 +203,54 @@ def _get_next_sequence_number(metadata_list: List[Dict], project_name: str) -> i
     
     return max_num + 1
 
+def _generate_and_save_task(
+    text: str,
+    voice_path: str,
+    output_path: str,
+    language: str,
+    controls: dict
+):
+    exaggeration = controls["exaggeration"].value
+    temperature = controls["temperature"].value
+    cfg_val = controls["cfg"].value
+    seed_val = int(controls["seed"].value)
+    top_p_val = controls["top_p"].value
+    min_p_val = controls["min_p"].value
+    rep_penalty_val = controls["repetition_penalty"].value
 
-def _process_audio_generation(project_name: str, lines: List[LineData], controls_dict: dict, language: str):
+    sr, audio_array = generate_tts_audio(
+        text_input=text,
+        language_id=language,
+        audio_prompt_path_input=voice_path,
+        exaggeration_input=exaggeration,
+        temperature_input=temperature,
+        seed_num_input=seed_val,
+        cfg_input=cfg_val,
+        repetition_penalty_input=rep_penalty_val,
+        min_p_input=min_p_val,
+        top_p_input=top_p_val
+    )
+
+    wavfile.write(output_path, sr, audio_array)
+
+    return {
+        "language": language,
+        "temperature": temperature,
+        "exaggeration": exaggeration,
+        "cfg": cfg_val,
+        "seed": seed_val,
+        "top_p": top_p_val,
+        "min_p": min_p_val,
+        "repetition_penalty": rep_penalty_val
+    }
+async def _process_audio_generation(project_name: str, lines: List[LineData], controls_dict: dict, language: str):
     if not language:
         ui.notify("Please select a language before generating.", type="warning")
         return
 
-    try:
-        exaggeration_val = controls_dict["exaggeration"].value
-        temperature_val = controls_dict["temperature"].value
-        cfg_val = controls_dict["cfg"].value
-        seed_val = int(controls_dict["seed"].value)
-        top_p_val = controls_dict["top_p"].value
-        min_p_val = controls_dict["min_p"].value
-        rep_penalty_val = controls_dict["repetition_penalty"].value
-    except KeyError as e:
-        ui.notify(f"Missing control setting: {e}", type="negative")
+    required_keys = ["exaggeration", "temperature", "cfg", "seed", "top_p", "min_p", "repetition_penalty"]
+    if not all(k in controls_dict for k in required_keys):
+        ui.notify("Missing control settings in UI.", type="negative")
         return
     
     project_path = os.path.join(DEFAULT_PROJECT_DIRECTORY, project_name)
@@ -219,26 +281,17 @@ def _process_audio_generation(project_name: str, lines: List[LineData], controls
         file_name = f"{project_name}_{current_index:03d}.wav"
         file_path = os.path.join(project_path,file_name)
         voice_path = os.path.join(DEFAULT_VOICE_LIBRARY, line.voice)
-
-        print(f"Generating: {file_name} for text: {line.text[:20]}...")
         
         try:
             # Call the wrapper function with values from UI
-            sr, audio_array = generate_tts_audio(
-                text_input=line.text,
-                language_id=language,
-                audio_prompt_path_input=voice_path,
-                exaggeration_input=exaggeration_val,
-                temperature_input=temperature_val,
-                seed_num_input=seed_val,
-                cfg_input=cfg_val,
-                repetition_penalty_input=rep_penalty_val,
-                min_p_input=min_p_val,
-                top_p_input=top_p_val
+            generation_params = await run.io_bound(
+                _generate_and_save_task,
+                text=line.text,
+                voice_path=voice_path,
+                output_path=file_path,
+                language=language,
+                controls=controls_dict
             )
-
-            # Save WAV file using scipy
-            wavfile.write(file_path, sr, audio_array)
 
             line.file_name = file_name
             
@@ -248,15 +301,12 @@ def _process_audio_generation(project_name: str, lines: List[LineData], controls
                 "text": line.text,
                 "voice": line.voice,
                 "pause": line.pause,
-                "params": {
-                    "lang": language,
-                    "temp": temperature_val,
-                    "exag": exaggeration_val
-                }
+                "params": generation_params
             }
             new_entries.append(entry)
             current_index += 1
-            
+
+            ui.notify(f"✅ Generated: {line.text[:20]}...", type="positive", position="bottom-right")
         except Exception as e:
             ui.notify(f"Error on line '{line.text[:10]}...': {str(e)}", type="negative")
             print(f"Gen Error: {e}")
@@ -267,38 +317,9 @@ def _process_audio_generation(project_name: str, lines: List[LineData], controls
         with open(metadata_path, "w", encoding="utf-8") as f:
             json.dump(metadata_list, f, indent=4, ensure_ascii=False)
         ui.notify(f"Successfully generated {len(new_entries)} files.", type="positive")
-
-
-def _load_project_metadata(project_name: str) -> List[LineData]:
-    if not project_name:
-        return []
-
-    project_path = os.path.join(DEFAULT_PROJECT_DIRECTORY, project_name)
-    metadata_path = os.path.join(project_path, "metadata.json")
-
-    if not os.path.exists(metadata_path):
-        return []
-
-    try:
-        with open(metadata_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        
-        return [
-            LineData(
-                speaker=entry.get("speaker", "Unknown"),
-                text=entry.get("text", ""),
-                voice=entry.get("voice"),
-                file_name=entry.get("file_name"),
-                pause=entry.get("pause", 0.5)
-            )
-            for entry in data
-        ]
-    except Exception as e:
-        ui.notify(f"Error loading metadata: {e}", type="negative")
-        return []
     
 
-def generate_lines_list(
+async def generate_lines_list(
     text_area: ui.textarea,
     single_voice_profile: ui.select,
     lines_container: ui.column,
@@ -314,7 +335,7 @@ def generate_lines_list(
     script = text_area.value.strip()
 
     if not script:
-        ui.notify("Text area is empty.", type="warning")
+        ui.notify("Text area is empty.", type="negative")
         return
 
     lines_container.clear()
@@ -335,14 +356,12 @@ def generate_lines_list(
     parsed_lines = _parse_lines(script, is_single_mode, single_voice_val, voice_map)
 
     try:
-        _process_audio_generation(project_input.value, parsed_lines, controls_dict, language_val)
+        await _process_audio_generation(project_input.value, parsed_lines, controls_dict, language_val)
     except Exception as e:
         ui.notify(f"Error generating audio: {str(e)}", type="negative")
         return
 
     _render_lines_grid(lines_container, parsed_lines)
-
-    ui.notify("Generated new audio parts list.", type="positive")
 
 
 def detect_speakers(
