@@ -3,7 +3,7 @@ from nicegui import ui
 from typing import List
 
 DEFAULT_VOICE_LIBRARY = "./voice_library"
-
+DEFAULT_PROJECT_DIRECTORY = "./projects"
 
 def get_audio_files(directory_path: str = DEFAULT_VOICE_LIBRARY) -> List[str]:
     AUDIO_EXTENSIONS = (".mp3", ".wav", ".ogg", ".flac", ".aac", ".m4a")

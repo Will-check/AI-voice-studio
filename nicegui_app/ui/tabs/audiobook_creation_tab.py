@@ -3,17 +3,64 @@ from typing import Optional, List, Dict
 
 from nicegui import ui
 from nicegui_app.logic.app_state import get_state
-from nicegui_app.logic.common_logic import get_audio_files
-from nicegui_app.ui.common_ui import get_bound_model_column, render_saved_profiles_dropdown
+from nicegui_app.logic.common_logic import (
+    get_audio_files,
+    DEFAULT_PROJECT_DIRECTORY
+)
+from nicegui_app.ui.common_ui import (
+    get_bound_model_column,
+    render_saved_profiles_dropdown,
+)
 from nicegui_app.ui.models.chatterbox_ui import chatterbox_controls
 from nicegui_app.ui.styles import Style
+import json
+import os
 import re
+
 
 @dataclass
 class LineData:
     speaker: str
     text: str
     voice: Optional[str]
+    file_name: Optional[str] = None
+    pause: float = 0.5
+
+
+def _ensure_project_exists(project_name: str, directory_path: str = DEFAULT_PROJECT_DIRECTORY):
+    if not project_name: 
+        return
+    project_path = os.path.join(directory_path, project_name)
+    if not os.path.isdir(project_path):
+        os.makedirs(project_path)
+        ui.notify(f"Created new project: {project_name}", type="positive")
+
+
+def get_existing_projects(directory_path: str = DEFAULT_PROJECT_DIRECTORY) -> List[str]:
+    if not os.path.isdir(directory_path):
+        os.makedirs(directory_path)
+
+    projects_list = [
+        name for name in os.listdir(directory_path) 
+        if os.path.isdir(os.path.join(directory_path, name))
+    ]
+
+    return projects_list
+
+def on_project_change(event, lines_container: ui.column, directory_path: str = DEFAULT_PROJECT_DIRECTORY):
+    project_name = event.value
+
+    _ensure_project_exists(project_name=project_name)
+
+    loaded_lines = _load_project_metadata(project_name)
+    _render_lines_grid(lines_container, loaded_lines)
+
+
+def refresh_project_options(select_element: ui.select):
+    current_projects = get_existing_projects()
+    select_element.options = current_projects
+    select_element.update()
+
 
 def _get_voice_map_from_ui(container: ui.column) -> Dict[str, str]:
     voice_map = {}
@@ -21,14 +68,21 @@ def _get_voice_map_from_ui(container: ui.column) -> Dict[str, str]:
         return voice_map
 
     for row in container.default_slot.children:
-        speaker_lbl = next((c for c in row.default_slot.children if isinstance(c, ui.label)), None)
-        voice_sel = next((c for c in row.default_slot.children if isinstance(c, ui.select)), None)
-        
+        speaker_lbl = next(
+            (c for c in row.default_slot.children if isinstance(c, ui.label)), None
+        )
+        voice_sel = next(
+            (c for c in row.default_slot.children if isinstance(c, ui.select)), None
+        )
+
         if speaker_lbl and voice_sel and voice_sel.value:
             voice_map[speaker_lbl.text] = voice_sel.value
     return voice_map
 
-def _parse_lines(script: str, is_single_mode: bool, single_voice: str, voice_map: Dict[str, str]) -> List[LineData]:
+
+def _parse_lines(
+    script: str, is_single_mode: bool, single_voice: str, voice_map: Dict[str, str]
+) -> List[LineData]:
     results = []
     for line in script.split("\n"):
         line = line.strip()
@@ -36,7 +90,9 @@ def _parse_lines(script: str, is_single_mode: bool, single_voice: str, voice_map
             continue
 
         if is_single_mode:
-            results.append(LineData(speaker="Single voice", text=line, voice=single_voice))
+            results.append(
+                LineData(speaker="Single voice", text=line, voice=single_voice)
+            )
         else:
             match = re.match(r"^\s*\[([A-Za-z0-9\s]+)\]\s*(.*)", line)
             if match:
@@ -45,41 +101,175 @@ def _parse_lines(script: str, is_single_mode: bool, single_voice: str, voice_map
                 results.append(LineData(speaker=speaker, text=text, voice=voice))
             else:
                 ui.notify(f"Skipped line without tag: {line}", type="negative")
-    
+
     return results
+
 
 def _render_line_row(item: LineData):
     with ui.row().classes(Style.centered_row):
         ui.checkbox()
-    
+
     ui.label(item.speaker).classes("text-center")
-    
-    ui.select(options=get_audio_files(), value=item.voice).classes("w-full").props("outlined dense")
-    
+
+    ui.select(options=get_audio_files(), value=item.voice).classes("w-full").props(
+        "outlined dense"
+    )
+
     with ui.row().classes(Style.centered_row):
-        ui.button(icon="play_arrow", on_click=lambda: ui.notify(f"Play: {item.text[:20]}...")).props("flat round color=primary")
-    
+        ui.button(
+            icon="play_arrow", on_click=lambda: ui.notify(f"Play: {item.text[:20]}...")
+        ).props("flat round color=primary")
+
     with ui.row().classes(Style.centered_row):
-        ui.button(icon="sync", on_click=lambda: ui.notify(f"Regen {item.speaker}")).props("flat round color=secondary")
-    
-    ui.number(value=0.5, format="%.1f", step=0.1, min=0).classes("w-full").props("outlined dense")
-    
+        ui.button(
+            icon="sync", on_click=lambda: ui.notify(f"Regen {item.speaker}")
+        ).props("flat round color=secondary")
+
+    ui.number(value=0.5, format="%.1f", step=0.1, min=0).classes("w-full").props(
+        "outlined dense"
+    )
+
     ui.label(item.text).classes("text-left")
-    
+
     ui.separator().classes("col-span-full")
+
+def _render_lines_grid(container: ui.column, lines: List[LineData]):
+    container.clear()
+    
+    if not lines:
+        return
+
+    with container:
+        ui.label(f"Project content ({len(lines)} lines):").classes(Style.standard_label)
+
+        cols = "auto 130px minmax(150px, 1fr) auto auto 110px 3fr"
+        with ui.grid(columns=cols).classes("items-center w-full gap-x-10 gap-y-1"):
+            headers = ["Exclude", "Speaker", "Voice", "▶ Play", "🔁 Regen", "Pause [s]", "Line text"]
+            for h in headers:
+                ui.label(h).classes(
+                    Style.list_header_center if h != "Line text" else Style.list_header_left
+                )
+            ui.separator().classes("my-1 col-span-full")
+
+            for item in lines:
+                _render_line_row(item)
+
+
+def _get_next_sequence_number(metadata_list: List[Dict], project_name: str) -> int:
+    max_num = 0
+    pattern = re.compile(rf"{re.escape(project_name)}_(\d+)")
+
+    for entry in metadata_list:
+        fname = entry.get("file_name", "")
+        match = pattern.search(fname)
+        if match:
+            num = int(match.group(1))
+            if num > max_num:
+                max_num = num
+    
+    return max_num + 1
+
+
+def _process_audio_generation(project_name: str, lines: List[LineData]):
+    project_path = os.path.join(DEFAULT_PROJECT_DIRECTORY, project_name)
+    if not os.path.isdir(project_path):
+        ui.notify("Project folder not found.", type="negative")
+    
+    metadata_path = os.path.join(project_path, "metadata.json")
+    
+    metadata_list = []
+    if os.path.exists(metadata_path):
+        try:
+            with open(metadata_path, "r", encoding="utf-8") as f:
+                metadata_list = json.load(f)
+        except json.JSONDecodeError:
+            metadata_list = []
+
+    current_index = _get_next_sequence_number(metadata_list, project_name)
+
+    new_entries = []
+
+    for line in lines:
+        file_name = f"{project_name}_{current_index:03d}.wav"
+        file_path = os.path.join(project_path,file_name)
+        
+        print(f"Generating: {file_name} for text: {line.text[:20]}...")
+        
+        # ! Here real function !
+        # audio_data = generate_tts_audio(text_input=line.text, voice=line.voice) 
+        
+        # Mockup for demo working
+        audio_data = b"FAKE_AUDIO_CONTENT" 
+
+        with open(file_path, "wb") as f:
+            f.write(audio_data)
+
+        line.file_name = file_name
+        
+        entry = {
+            "file_name": file_name,
+            "speaker": line.speaker,
+            "text": line.text,
+            "voice": line.voice,
+            "pause": line.pause
+        }
+        new_entries.append(entry)
+        
+        current_index += 1
+
+    metadata_list.extend(new_entries)
+    
+    with open(metadata_path, "w", encoding="utf-8") as f:
+        json.dump(metadata_list, f, indent=4, ensure_ascii=False)
+
+
+def _load_project_metadata(project_name: str) -> List[LineData]:
+    if not project_name:
+        return []
+
+    project_path = os.path.join(DEFAULT_PROJECT_DIRECTORY, project_name)
+    metadata_path = os.path.join(project_path, "metadata.json")
+
+    if not os.path.exists(metadata_path):
+        return []
+
+    try:
+        with open(metadata_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        
+        return [
+            LineData(
+                speaker=entry.get("speaker", "Unknown"),
+                text=entry.get("text", ""),
+                voice=entry.get("voice"),
+                file_name=entry.get("file_name"),
+                pause=entry.get("pause", 0.5)
+            )
+            for entry in data
+        ]
+    except Exception as e:
+        ui.notify(f"Error loading metadata: {e}", type="negative")
+        return []
+    
 
 def generate_lines_list(
     text_area: ui.textarea,
     single_voice_profile: ui.select,
     lines_container: ui.column,
     speaker_list_container: ui.column,
+    project_input: ui.input,
 ):
-    lines_container.clear()
+    if project_input.value is None:
+        ui.notify("Missing project selection.", type="negative")
+        return
+
     script = text_area.value.strip()
 
     if not script:
         ui.notify("Text area is empty.", type="warning")
         return
+
+    lines_container.clear()
 
     is_single_mode = single_voice_profile.enabled
     single_voice_val = single_voice_profile.value
@@ -92,25 +282,17 @@ def generate_lines_list(
     elif speaker_list_container.visible:
         voice_map = _get_voice_map_from_ui(speaker_list_container)
         if not voice_map:
-             ui.notify("No speakers configured or voices missing.", type="negative")
+            ui.notify("No speakers configured or voices missing.", type="negative")
 
     parsed_lines = _parse_lines(script, is_single_mode, single_voice_val, voice_map)
 
-    with lines_container:
-        ui.label("Generated lines list:").classes(Style.standard_label)
-        
-        cols = "auto 130px minmax(150px, 1fr) auto auto 110px 3fr"
-        with ui.grid(columns=cols).classes("items-center w-full gap-x-10 gap-y-1"):
-            
-            # Header
-            headers = ["Exclude", "Speaker", "Voice", "▶ Play", "🔁 Regen", "Pause [s]", "Line text"]
-            for h in headers:
-                ui.label(h).classes(Style.list_header_center if h != "Line text" else Style.list_header_left)
-            ui.separator().classes("my-1 col-span-full")
+    try:
+        _process_audio_generation(project_input.value, parsed_lines)
+    except Exception as e:
+        ui.notify(f"Error generating audio: {str(e)}", type="negative")
+        return
 
-            # Data Rows
-            for item in parsed_lines:
-                _render_line_row(item)
+    _render_lines_grid(lines_container, parsed_lines)
 
     ui.notify("Generated new audio parts list.", type="positive")
 
@@ -213,9 +395,17 @@ def audiobook_creation_tab(tab_object: ui.tab):
         with ui.column().classes("w-full gap-6 p-6"):
             with ui.row().classes(Style.standard_border + " items-center"):
                 ui.label("Project:").classes("font-semibold text-gray-700")
-                ui.input(value="", label="Select folder / project name").classes(
-                    "flex-grow"
-                ).props("outlined dense color=indigo")
+                project_select = (
+                    ui.select(
+                        options=get_existing_projects(),
+                        label="Select folder / project name",
+                        with_input=True,
+                        on_change=lambda e: on_project_change(e, lines_list_container),
+                    )
+                    .classes("flex-grow")
+                    .props("outlined dense color=indigo new-value-mode='add-unique'")
+                    .on('focus', lambda: refresh_project_options(project_select))
+                )
 
             with ui.row().classes("flex flex-wrap justify-start w-full gap-6"):
                 with ui.column().classes(Style.half_screen_column):
@@ -238,9 +428,7 @@ def audiobook_creation_tab(tab_object: ui.tab):
                     with ui.card().classes(Style.standard_border + " h-[460px]"):
                         speaker_list_container = None
 
-                        single_voice_select = speaker_row(
-                            "Single voice"
-                        )
+                        single_voice_select = speaker_row("Single voice")
 
                         ui.button(
                             "Detect Speakers",
@@ -297,6 +485,7 @@ def audiobook_creation_tab(tab_object: ui.tab):
                                     single_voice_profile=single_voice_select,
                                     lines_container=lines_list_container,
                                     speaker_list_container=speaker_list_container,
+                                    project_input=project_select,
                                 ),
                             ).classes(Style.small_button + " flex-grow").props(
                                 "color=indigo"
