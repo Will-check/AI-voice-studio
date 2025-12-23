@@ -3,9 +3,12 @@ from typing import Optional, List, Dict
 
 from nicegui import ui
 from nicegui_app.logic.app_state import get_state
+from nicegui_app.models.chatterbox_wrapper import generate_tts_audio, LANGUAGES
 from nicegui_app.logic.common_logic import (
     get_audio_files,
-    DEFAULT_PROJECT_DIRECTORY
+    update_language_dropdown,
+    DEFAULT_PROJECT_DIRECTORY,
+    DEFAULT_VOICE_LIBRARY
 )
 from nicegui_app.ui.common_ui import (
     get_bound_model_column,
@@ -16,6 +19,7 @@ from nicegui_app.ui.styles import Style
 import json
 import os
 import re
+import scipy.io.wavfile as wavfile
 
 
 @dataclass
@@ -170,7 +174,23 @@ def _get_next_sequence_number(metadata_list: List[Dict], project_name: str) -> i
     return max_num + 1
 
 
-def _process_audio_generation(project_name: str, lines: List[LineData]):
+def _process_audio_generation(project_name: str, lines: List[LineData], controls_dict: dict, language: str):
+    if not language:
+        ui.notify("Please select a language before generating.", type="warning")
+        return
+
+    try:
+        exaggeration_val = controls_dict["exaggeration"].value
+        temperature_val = controls_dict["temperature"].value
+        cfg_val = controls_dict["cfg"].value
+        seed_val = int(controls_dict["seed"].value)
+        top_p_val = controls_dict["top_p"].value
+        min_p_val = controls_dict["min_p"].value
+        rep_penalty_val = controls_dict["repetition_penalty"].value
+    except KeyError as e:
+        ui.notify(f"Missing control setting: {e}", type="negative")
+        return
+    
     project_path = os.path.join(DEFAULT_PROJECT_DIRECTORY, project_name)
     if not os.path.isdir(project_path):
         ui.notify("Project folder not found.", type="negative")
@@ -189,38 +209,64 @@ def _process_audio_generation(project_name: str, lines: List[LineData]):
 
     new_entries = []
 
+    ui.notify(f"Starting generation of {len(lines)} lines...", type="info")
+
     for line in lines:
+        if not line.voice:
+            ui.notify(f"Skipping line: '{line.text[:20]}...' due to missing voice.", type="warning")
+            continue
+
         file_name = f"{project_name}_{current_index:03d}.wav"
         file_path = os.path.join(project_path,file_name)
-        
+        voice_path = os.path.join(DEFAULT_VOICE_LIBRARY, line.voice)
+
         print(f"Generating: {file_name} for text: {line.text[:20]}...")
         
-        # ! Here real function !
-        # audio_data = generate_tts_audio(text_input=line.text, voice=line.voice) 
-        
-        # Mockup for demo working
-        audio_data = b"FAKE_AUDIO_CONTENT" 
+        try:
+            # Call the wrapper function with values from UI
+            sr, audio_array = generate_tts_audio(
+                text_input=line.text,
+                language_id=language,
+                audio_prompt_path_input=voice_path,
+                exaggeration_input=exaggeration_val,
+                temperature_input=temperature_val,
+                seed_num_input=seed_val,
+                cfg_input=cfg_val,
+                repetition_penalty_input=rep_penalty_val,
+                min_p_input=min_p_val,
+                top_p_input=top_p_val
+            )
 
-        with open(file_path, "wb") as f:
-            f.write(audio_data)
+            # Save WAV file using scipy
+            wavfile.write(file_path, sr, audio_array)
 
-        line.file_name = file_name
-        
-        entry = {
-            "file_name": file_name,
-            "speaker": line.speaker,
-            "text": line.text,
-            "voice": line.voice,
-            "pause": line.pause
-        }
-        new_entries.append(entry)
-        
-        current_index += 1
+            line.file_name = file_name
+            
+            entry = {
+                "file_name": file_name,
+                "speaker": line.speaker,
+                "text": line.text,
+                "voice": line.voice,
+                "pause": line.pause,
+                "params": {
+                    "lang": language,
+                    "temp": temperature_val,
+                    "exag": exaggeration_val
+                }
+            }
+            new_entries.append(entry)
+            current_index += 1
+            
+        except Exception as e:
+            ui.notify(f"Error on line '{line.text[:10]}...': {str(e)}", type="negative")
+            print(f"Gen Error: {e}")
+            continue
 
-    metadata_list.extend(new_entries)
-    
-    with open(metadata_path, "w", encoding="utf-8") as f:
-        json.dump(metadata_list, f, indent=4, ensure_ascii=False)
+    if new_entries:
+        metadata_list.extend(new_entries)
+        with open(metadata_path, "w", encoding="utf-8") as f:
+            json.dump(metadata_list, f, indent=4, ensure_ascii=False)
+        ui.notify(f"Successfully generated {len(new_entries)} files.", type="positive")
 
 
 def _load_project_metadata(project_name: str) -> List[LineData]:
@@ -258,6 +304,8 @@ def generate_lines_list(
     lines_container: ui.column,
     speaker_list_container: ui.column,
     project_input: ui.input,
+    controls_dict: dict,
+    language_val: str
 ):
     if project_input.value is None:
         ui.notify("Missing project selection.", type="negative")
@@ -287,7 +335,7 @@ def generate_lines_list(
     parsed_lines = _parse_lines(script, is_single_mode, single_voice_val, voice_map)
 
     try:
-        _process_audio_generation(project_input.value, parsed_lines)
+        _process_audio_generation(project_input.value, parsed_lines, controls_dict, language_val)
     except Exception as e:
         ui.notify(f"Error generating audio: {str(e)}", type="negative")
         return
@@ -409,7 +457,7 @@ def audiobook_creation_tab(tab_object: ui.tab):
 
             with ui.row().classes("flex flex-wrap justify-start w-full gap-6"):
                 with ui.column().classes(Style.half_screen_column):
-                    with ui.card().classes(Style.standard_border + " h-[460px]"):
+                    with ui.card().classes(Style.standard_border + " h-[510px]"):
                         ui.label("Text to synthesize").classes(Style.standard_label)
                         text_input = (
                             ui.textarea(
@@ -424,8 +472,21 @@ def audiobook_creation_tab(tab_object: ui.tab):
                             .props("rows=20 outlined dense")
                         )
 
+                        language_select = ui.select(
+                            options=[], 
+                            value=None, 
+                            label="Language"
+                        ).classes("w-full mb-2").props("outlined dense")
+
+                        model_watcher = ui.input().classes("hidden")
+                        model_watcher.bind_value_from(app_state, "active_model")
+                        model_watcher.on_value_change(
+                            lambda e: update_language_dropdown(language_select, e.value)
+                        )
+                        update_language_dropdown(language_select, app_state.active_model)
+
                 with ui.column().classes(Style.half_screen_column):
-                    with ui.card().classes(Style.standard_border + " h-[460px]"):
+                    with ui.card().classes(Style.standard_border + " h-[510px]"):
                         speaker_list_container = None
 
                         single_voice_select = speaker_row("Single voice")
@@ -486,6 +547,8 @@ def audiobook_creation_tab(tab_object: ui.tab):
                                     lines_container=lines_list_container,
                                     speaker_list_container=speaker_list_container,
                                     project_input=project_select,
+                                    controls_dict=chatterbox_ui_controls,
+                                    language_val=language_select.value
                                 ),
                             ).classes(Style.small_button + " flex-grow").props(
                                 "color=indigo"

@@ -4,6 +4,7 @@ import scipy.io.wavfile
 
 from nicegui import ui, run
 from nicegui_app.logic.app_state import get_state
+from nicegui_app.logic.common_logic import update_language_dropdown
 from nicegui_app.models.chatterbox_wrapper import (
     LANGUAGES,
     MAX_CHARS,
@@ -120,25 +121,12 @@ def single_generation_tab(tab_object: ui.tab):
                         app_state, "active_model", is_any_model_selected
                     )
 
-                    def update_language_options(model_name):
-                        if model_name == "Chatterbox":
-                            language_dropdown.options = LANGUAGES
-                            if "en" in LANGUAGES:
-                                language_dropdown.value = "en"
-                            elif LANGUAGES:
-                                language_dropdown.value = LANGUAGES[0]
-                        else:
-                            language_dropdown.options = []
-                            language_dropdown.value = None
-
-                        language_dropdown.update()
-
-                    update_language_options(app_state.active_model)
+                    update_language_dropdown(language_dropdown, app_state.active_model)
 
                     model_watcher = ui.input().classes("hidden")
                     model_watcher.bind_value_from(app_state, "active_model")
                     model_watcher.on_value_change(
-                        lambda e: update_language_options(e.value)
+                        lambda e: update_language_dropdown(language_dropdown, e.value)
                     )
 
                     ui.label("Output Audio").classes(Style.standard_label)

@@ -1,9 +1,29 @@
 import os
 from nicegui import ui
+from nicegui_app.models.chatterbox_wrapper import LANGUAGES
 from typing import List
 
 DEFAULT_VOICE_LIBRARY = "./voice_library"
 DEFAULT_PROJECT_DIRECTORY = "./projects"
+
+
+def update_language_dropdown(target_select: ui.select, model_name: str):
+    if model_name == "Chatterbox":
+        target_select.options = LANGUAGES
+        if not target_select.value or target_select.value not in LANGUAGES:
+            if "en" in LANGUAGES:
+                target_select.value = "en"
+            elif LANGUAGES:
+                target_select.value = LANGUAGES[0]
+        
+        target_select.enable()
+    else:
+        target_select.options = []
+        target_select.value = None
+        target_select.disable()
+
+    target_select.update()
+
 
 def get_audio_files(directory_path: str = DEFAULT_VOICE_LIBRARY) -> List[str]:
     AUDIO_EXTENSIONS = (".mp3", ".wav", ".ogg", ".flac", ".aac", ".m4a")
@@ -62,3 +82,4 @@ def load_audio_to_player(
         if profile_select:
             profile_select.value = None
             profile_select.update()
+            
