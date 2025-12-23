@@ -1,35 +1,79 @@
+from dataclasses import dataclass
+from typing import Optional, List, Dict
+
 from nicegui import ui
 from nicegui_app.logic.app_state import get_state
-from nicegui_app.ui.common_ui import get_bound_model_column
+from nicegui_app.logic.common_logic import get_audio_files
+from nicegui_app.ui.common_ui import get_bound_model_column, render_saved_profiles_dropdown
 from nicegui_app.ui.models.chatterbox_ui import chatterbox_controls
 from nicegui_app.ui.styles import Style
 import re
 
+@dataclass
+class LineData:
+    speaker: str
+    text: str
+    voice: Optional[str]
+
+def _get_voice_map_from_ui(container: ui.column) -> Dict[str, str]:
+    voice_map = {}
+    if not hasattr(container, "default_slot"):
+        return voice_map
+
+    for row in container.default_slot.children:
+        speaker_lbl = next((c for c in row.default_slot.children if isinstance(c, ui.label)), None)
+        voice_sel = next((c for c in row.default_slot.children if isinstance(c, ui.select)), None)
+        
+        if speaker_lbl and voice_sel and voice_sel.value:
+            voice_map[speaker_lbl.text] = voice_sel.value
+    return voice_map
+
+def _parse_lines(script: str, is_single_mode: bool, single_voice: str, voice_map: Dict[str, str]) -> List[LineData]:
+    results = []
+    for line in script.split("\n"):
+        line = line.strip()
+        if not line:
+            continue
+
+        if is_single_mode:
+            results.append(LineData(speaker="Single voice", text=line, voice=single_voice))
+        else:
+            match = re.match(r"^\s*\[([A-Za-z0-9\s]+)\]\s*(.*)", line)
+            if match:
+                speaker, text = [x.strip() for x in match.groups()]
+                voice = voice_map.get(speaker.capitalize())
+                results.append(LineData(speaker=speaker, text=text, voice=voice))
+            else:
+                ui.notify(f"Skipped line without tag: {line}", type="negative")
+    
+    return results
+
+def _render_line_row(item: LineData):
+    with ui.row().classes(Style.centered_row):
+        ui.checkbox()
+    
+    ui.label(item.speaker).classes("text-center")
+    
+    ui.select(options=get_audio_files(), value=item.voice).classes("w-full").props("outlined dense")
+    
+    with ui.row().classes(Style.centered_row):
+        ui.button(icon="play_arrow", on_click=lambda: ui.notify(f"Play: {item.text[:20]}...")).props("flat round color=primary")
+    
+    with ui.row().classes(Style.centered_row):
+        ui.button(icon="sync", on_click=lambda: ui.notify(f"Regen {item.speaker}")).props("flat round color=secondary")
+    
+    ui.number(value=0.5, format="%.1f", step=0.1, min=0).classes("w-full").props("outlined dense")
+    
+    ui.label(item.text).classes("text-left")
+    
+    ui.separator().classes("col-span-full")
 
 def generate_lines_list(
     text_area: ui.textarea,
+    single_voice_profile: ui.select,
     lines_container: ui.column,
-    voice_options: list,
     speaker_list_container: ui.column,
 ):
-
-    # 1. Build speaker-voice map from the UI elements in speaker_list_container
-    speaker_voice_map = {}
-    if hasattr(speaker_list_container, "default_slot"):
-        for row in speaker_list_container.default_slot.children:
-            speaker_label = None
-            voice_select = None
-            for child in row.default_slot.children:
-                if isinstance(child, ui.label):
-                    speaker_label = child
-                elif isinstance(child, ui.select):
-                    voice_select = child
-
-            if speaker_label and voice_select:
-                speaker_name = speaker_label.text
-                selected_voice = voice_select.value
-                speaker_voice_map[speaker_name] = selected_voice
-
     lines_container.clear()
     script = text_area.value.strip()
 
@@ -37,75 +81,36 @@ def generate_lines_list(
         ui.notify("Text area is empty.", type="warning")
         return
 
-    lines = script.split("\n")
+    is_single_mode = single_voice_profile.enabled
+    single_voice_val = single_voice_profile.value
+    voice_map = {}
 
-    has_speaker_tags = any(
-        re.match(r"^\s*\[([A-Za-z0-9\s]+)\]", line) for line in lines
-    )
-    if not has_speaker_tags:
-        ui.notify(
-            "No speaker tags found in the format [Speaker]. Cannot generate lines list.",
-            type="warning",
-        )
-        return
+    if is_single_mode:
+        if not single_voice_val:
+            ui.notify("Missing single speaker voice.", type="negative")
+            return
+    elif speaker_list_container.visible:
+        voice_map = _get_voice_map_from_ui(speaker_list_container)
+        if not voice_map:
+             ui.notify("No speakers configured or voices missing.", type="negative")
+
+    parsed_lines = _parse_lines(script, is_single_mode, single_voice_val, voice_map)
 
     with lines_container:
-        ui.label("Generated lines list:").classes("text-lg font-semibold")
-
-        # Define grid layout
+        ui.label("Generated lines list:").classes(Style.standard_label)
+        
         cols = "auto 130px minmax(150px, 1fr) auto auto 110px 3fr"
         with ui.grid(columns=cols).classes("items-center w-full gap-x-10 gap-y-1"):
+            
             # Header
-            ui.label("Exclude").classes(Style.list_header_center)
-            ui.label("Speaker").classes(Style.list_header_center)
-            ui.label("Voice (dropdown)").classes(Style.list_header_center)
-            ui.label("▶ Play").classes(Style.list_header_center)
-            ui.label("🔁 Regenerate").classes(Style.list_header_center)
-            ui.label("Pause [s]").classes(Style.list_header_center)
-            ui.label("Line text").classes(Style.list_header_left)
-
-            # Header separator
+            headers = ["Exclude", "Speaker", "Voice", "▶ Play", "🔁 Regen", "Pause [s]", "Line text"]
+            for h in headers:
+                ui.label(h).classes(Style.list_header_center if h != "Line text" else Style.list_header_left)
             ui.separator().classes("my-1 col-span-full")
 
             # Data Rows
-            for line in lines:
-                line = line.strip()
-                if not line:
-                    continue
-
-                match = re.match(r"^\s*\[([A-Za-z0-9\s]+)\]\s*(.*)", line)
-                if match:
-                    speaker, text = [x.strip() for x in match.groups()]
-                    speaker_capitalized = speaker.capitalize()
-
-                    assigned_voice = speaker_voice_map.get(
-                        speaker_capitalized, voice_options[0]
-                    )
-
-                    # Grid cells for a single line
-                    with ui.row().classes(Style.centered_row):
-                        ui.checkbox()
-                    ui.label(speaker).classes("text-center")
-                    ui.select(options=voice_options, value=assigned_voice).classes(
-                        "w-full"
-                    ).props("outlined dense")
-                    with ui.row().classes(Style.centered_row):
-                        ui.button(
-                            icon="play_arrow",
-                            on_click=lambda s=text: ui.notify(f"Play: {s[:30]}..."),
-                        ).props("flat round color=primary")
-                    with ui.row().classes(Style.centered_row):
-                        ui.button(
-                            icon="sync",
-                            on_click=lambda s=speaker: ui.notify(f"Regenerate for {s}"),
-                        ).props("flat round color=secondary")
-                    ui.number(value=0.5, format="%.1f", step=0.1, min=0).classes(
-                        "w-full"
-                    ).props("outlined dense")
-                    ui.label(text).classes("text-left")
-
-                    # Separator for each line
-                    ui.separator().classes("col-span-full")
+            for item in parsed_lines:
+                _render_line_row(item)
 
     ui.notify("Generated new audio parts list.", type="positive")
 
@@ -114,28 +119,25 @@ def detect_speakers(
     textarea_ref: ui.textarea,
     speaker_list_container: ui.column,
     results_container: ui.column,
-    voice_options: list,
     single_voice_select: ui.select,
 ):
     script = textarea_ref.value
     speaker_tags = set(re.findall(r"^\s*\[([A-Za-z0-9\s]+)\]", script, re.MULTILINE))
 
-    new_speakers = {}
+    new_speakers = set()
 
     for tag in sorted(list(speaker_tags)):
         normalized_tag = tag.capitalize()
-        new_speakers[normalized_tag] = ""
+        new_speakers.add(normalized_tag)
 
     speaker_list_container.clear()
 
     if new_speakers:
         results_container.set_visibility(True)
         with speaker_list_container:
-            for speaker, default_voice in new_speakers.items():
+            for speaker in new_speakers:
                 speaker_row(
-                    speaker,
-                    voice_options,
-                    default_voice,
+                    speaker_name=speaker,
                     list_container=speaker_list_container,
                     single_voice_select=single_voice_select,
                     results_container=results_container,
@@ -177,9 +179,7 @@ def remove_speaker(
 
 def speaker_row(
     speaker_name: str,
-    voice_options: list,
-    default_voice: str,
-    label_classes: str = "",
+    label_classes: str = None,
     list_container: ui.column = None,
     single_voice_select: ui.select = None,
     results_container: ui.column = None,
@@ -200,19 +200,14 @@ def speaker_row(
         ui.label(speaker_name).classes(
             default_label_classes if not label_classes else label_classes
         )
+        profile_select = render_saved_profiles_dropdown("flex-grow")
+        profile_select.props("outlined dense color=indigo")
 
-        row = (
-            ui.select(options=voice_options, value=default_voice, label="Select Voice")
-            .classes("flex-grow")
-            .props("outlined dense color=indigo")
-        )
-
-    return row
+    return profile_select
 
 
 def audiobook_creation_tab(tab_object: ui.tab):
     app_state = get_state()
-    voice_options = ["", "Voice A (M)", "Voice B (F)", "Voice C (Child)"]
 
     with ui.tab_panel(tab_object).classes("w-full p-0 m-0"):
         with ui.column().classes("w-full gap-6 p-6"):
@@ -244,9 +239,7 @@ def audiobook_creation_tab(tab_object: ui.tab):
                         speaker_list_container = None
 
                         single_voice_select = speaker_row(
-                            "Single voice",
-                            voice_options,
-                            "",
+                            "Single voice"
                         )
 
                         ui.button(
@@ -255,7 +248,6 @@ def audiobook_creation_tab(tab_object: ui.tab):
                                 text_input,
                                 speaker_list_container,
                                 results_container,
-                                voice_options,
                                 single_voice_select,
                             ),
                         ).classes(Style.small_button + " w-full").props("color=indigo")
@@ -301,10 +293,10 @@ def audiobook_creation_tab(tab_object: ui.tab):
                             ui.button(
                                 "Create audio parts",
                                 on_click=lambda: generate_lines_list(
-                                    text_input,
-                                    lines_list_container,
-                                    voice_options,
-                                    speaker_list_container,
+                                    text_area=text_input,
+                                    single_voice_profile=single_voice_select,
+                                    lines_container=lines_list_container,
+                                    speaker_list_container=speaker_list_container,
                                 ),
                             ).classes(Style.small_button + " flex-grow").props(
                                 "color=indigo"

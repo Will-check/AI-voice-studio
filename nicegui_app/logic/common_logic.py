@@ -21,7 +21,7 @@ def get_audio_files(directory_path: str = DEFAULT_VOICE_LIBRARY) -> List[str]:
             if os.path.isfile(full_path) and filename.lower().endswith(
                 AUDIO_EXTENSIONS
             ):
-                audio_files.append(full_path)
+                audio_files.append(os.path.basename(full_path))
 
     except PermissionError:
         print(f"Error: Permission denied to read directory '{directory_path}'.")
@@ -39,7 +39,7 @@ def update_audio_dropdown(
         target_select.options = {}
         target_select.value = None
     else:
-        target_select.options = {f: os.path.basename(f) for f in files}
+        target_select.options = files
 
     target_select.update()
 
