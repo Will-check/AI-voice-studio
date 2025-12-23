@@ -3,12 +3,12 @@ from typing import Optional, List, Dict
 
 from nicegui import ui, run
 from nicegui_app.logic.app_state import get_state
-from nicegui_app.models.chatterbox_wrapper import generate_tts_audio, LANGUAGES
+from nicegui_app.models.chatterbox_wrapper import generate_tts_audio
 from nicegui_app.logic.common_logic import (
     get_audio_files,
     update_language_dropdown,
     DEFAULT_PROJECT_DIRECTORY,
-    DEFAULT_VOICE_LIBRARY
+    DEFAULT_VOICE_LIBRARY,
 )
 from nicegui_app.ui.common_ui import (
     get_bound_model_column,
@@ -16,10 +16,12 @@ from nicegui_app.ui.common_ui import (
 )
 from nicegui_app.ui.models.chatterbox_ui import chatterbox_controls
 from nicegui_app.ui.styles import Style
+
 import json
 import os
 import re
 import scipy.io.wavfile as wavfile
+import time
 
 
 @dataclass
@@ -31,8 +33,10 @@ class LineData:
     pause: float = 0.5
 
 
-def _ensure_project_exists(project_name: str, directory_path: str = DEFAULT_PROJECT_DIRECTORY):
-    if not project_name: 
+def _ensure_project_exists(
+    project_name: str, directory_path: str = DEFAULT_PROJECT_DIRECTORY
+):
+    if not project_name:
         return
     project_path = os.path.join(directory_path, project_name)
     if not os.path.isdir(project_path):
@@ -53,29 +57,31 @@ def _load_project_metadata(project_name: str) -> List[LineData]:
     try:
         with open(metadata_path, "r", encoding="utf-8") as f:
             data = json.load(f)
-        
+
         return [
             LineData(
                 speaker=entry.get("speaker", "Unknown"),
                 text=entry.get("text", ""),
                 voice=entry.get("voice"),
                 file_name=entry.get("file_name"),
-                pause=entry.get("pause", 0.5)
+                pause=entry.get("pause", 0.5),
             )
             for entry in data
         ]
     except Exception as e:
         ui.notify(f"Error loading metadata: {e}", type="negative")
         return []
-    
 
-def on_project_change(event, lines_container: ui.column, directory_path: str = DEFAULT_PROJECT_DIRECTORY):
+
+def on_project_change(
+    event, lines_container: ui.column, directory_path: str = DEFAULT_PROJECT_DIRECTORY
+):
     project_name = event.value
 
     _ensure_project_exists(project_name=project_name)
 
     loaded_lines = _load_project_metadata(project_name)
-    _render_lines_grid(lines_container, loaded_lines)
+    _render_lines_grid(lines_container, loaded_lines, project_name)
 
 
 def get_existing_projects(directory_path: str = DEFAULT_PROJECT_DIRECTORY) -> List[str]:
@@ -83,7 +89,8 @@ def get_existing_projects(directory_path: str = DEFAULT_PROJECT_DIRECTORY) -> Li
         os.makedirs(directory_path)
 
     projects_list = [
-        name for name in os.listdir(directory_path) 
+        name
+        for name in os.listdir(directory_path)
         if os.path.isdir(os.path.join(directory_path, name))
     ]
 
@@ -139,7 +146,7 @@ def _parse_lines(
     return results
 
 
-def _render_line_row(item: LineData):
+def _render_line_row(item: LineData, project_name: str):
     with ui.row().classes(Style.centered_row):
         ui.checkbox()
 
@@ -149,10 +156,29 @@ def _render_line_row(item: LineData):
         "outlined dense"
     )
 
+    def play_line():
+        if not item.file_name:
+            ui.notify("No audio file generated for this line.", type="warning")
+            return
+
+        # Adding ?t=time, to bypass browser cache
+        source_url = f"/projects/{project_name}/{item.file_name}?t={time.time()}"
+
+        ui.run_javascript(
+            f"""
+            if (window.currentAudio) {{
+                window.currentAudio.pause();
+                window.currentAudio.currentTime = 0;
+            }}
+            window.currentAudio = new Audio("{source_url}");
+            window.currentAudio.play();
+        """
+        )
+
     with ui.row().classes(Style.centered_row):
-        ui.button(
-            icon="play_arrow", on_click=lambda: ui.notify(f"Play: {item.text[:20]}...")
-        ).props("flat round color=primary")
+        ui.button(icon="play_arrow", on_click=play_line).props(
+            "flat round color=primary"
+        )
 
     with ui.row().classes(Style.centered_row):
         ui.button(
@@ -167,9 +193,10 @@ def _render_line_row(item: LineData):
 
     ui.separator().classes("col-span-full")
 
-def _render_lines_grid(container: ui.column, lines: List[LineData]):
+
+def _render_lines_grid(container: ui.column, lines: List[LineData], project_name: str):
     container.clear()
-    
+
     if not lines:
         return
 
@@ -178,15 +205,25 @@ def _render_lines_grid(container: ui.column, lines: List[LineData]):
 
         cols = "auto 130px minmax(150px, 1fr) auto auto 110px 3fr"
         with ui.grid(columns=cols).classes("items-center w-full gap-x-10 gap-y-1"):
-            headers = ["Exclude", "Speaker", "Voice", "▶ Play", "🔁 Regen", "Pause [s]", "Line text"]
+            headers = [
+                "Exclude",
+                "Speaker",
+                "Voice",
+                "▶ Play",
+                "🔁 Regen",
+                "Pause [s]",
+                "Line text",
+            ]
             for h in headers:
                 ui.label(h).classes(
-                    Style.list_header_center if h != "Line text" else Style.list_header_left
+                    Style.list_header_center
+                    if h != "Line text"
+                    else Style.list_header_left
                 )
             ui.separator().classes("my-1 col-span-full")
 
             for item in lines:
-                _render_line_row(item)
+                _render_line_row(item, project_name)
 
 
 def _get_next_sequence_number(metadata_list: List[Dict], project_name: str) -> int:
@@ -200,15 +237,12 @@ def _get_next_sequence_number(metadata_list: List[Dict], project_name: str) -> i
             num = int(match.group(1))
             if num > max_num:
                 max_num = num
-    
+
     return max_num + 1
 
+
 def _generate_and_save_task(
-    text: str,
-    voice_path: str,
-    output_path: str,
-    language: str,
-    controls: dict
+    text: str, voice_path: str, output_path: str, language: str, controls: dict
 ):
     exaggeration = controls["exaggeration"].value
     temperature = controls["temperature"].value
@@ -228,7 +262,7 @@ def _generate_and_save_task(
         cfg_input=cfg_val,
         repetition_penalty_input=rep_penalty_val,
         min_p_input=min_p_val,
-        top_p_input=top_p_val
+        top_p_input=top_p_val,
     )
 
     wavfile.write(output_path, sr, audio_array)
@@ -241,24 +275,36 @@ def _generate_and_save_task(
         "seed": seed_val,
         "top_p": top_p_val,
         "min_p": min_p_val,
-        "repetition_penalty": rep_penalty_val
+        "repetition_penalty": rep_penalty_val,
     }
-async def _process_audio_generation(project_name: str, lines: List[LineData], controls_dict: dict, language: str):
+
+
+async def _process_audio_generation(
+    project_name: str, lines: List[LineData], controls_dict: dict, language: str
+):
     if not language:
         ui.notify("Please select a language before generating.", type="warning")
         return
 
-    required_keys = ["exaggeration", "temperature", "cfg", "seed", "top_p", "min_p", "repetition_penalty"]
+    required_keys = [
+        "exaggeration",
+        "temperature",
+        "cfg",
+        "seed",
+        "top_p",
+        "min_p",
+        "repetition_penalty",
+    ]
     if not all(k in controls_dict for k in required_keys):
         ui.notify("Missing control settings in UI.", type="negative")
         return
-    
+
     project_path = os.path.join(DEFAULT_PROJECT_DIRECTORY, project_name)
     if not os.path.isdir(project_path):
         ui.notify("Project folder not found.", type="negative")
-    
+
     metadata_path = os.path.join(project_path, "metadata.json")
-    
+
     metadata_list = []
     if os.path.exists(metadata_path):
         try:
@@ -275,13 +321,16 @@ async def _process_audio_generation(project_name: str, lines: List[LineData], co
 
     for line in lines:
         if not line.voice:
-            ui.notify(f"Skipping line: '{line.text[:20]}...' due to missing voice.", type="warning")
+            ui.notify(
+                f"Skipping line: '{line.text[:20]}...' due to missing voice.",
+                type="warning",
+            )
             continue
 
         file_name = f"{project_name}_{current_index:03d}.wav"
-        file_path = os.path.join(project_path,file_name)
+        file_path = os.path.join(project_path, file_name)
         voice_path = os.path.join(DEFAULT_VOICE_LIBRARY, line.voice)
-        
+
         try:
             # Call the wrapper function with values from UI
             generation_params = await run.io_bound(
@@ -290,23 +339,27 @@ async def _process_audio_generation(project_name: str, lines: List[LineData], co
                 voice_path=voice_path,
                 output_path=file_path,
                 language=language,
-                controls=controls_dict
+                controls=controls_dict,
             )
 
             line.file_name = file_name
-            
+
             entry = {
                 "file_name": file_name,
                 "speaker": line.speaker,
                 "text": line.text,
                 "voice": line.voice,
                 "pause": line.pause,
-                "params": generation_params
+                "params": generation_params,
             }
             new_entries.append(entry)
             current_index += 1
 
-            ui.notify(f"✅ Generated: {line.text[:20]}...", type="positive", position="bottom-right")
+            ui.notify(
+                f"✅ Generated: {line.text[:20]}...",
+                type="positive",
+                position="bottom-right",
+            )
         except Exception as e:
             ui.notify(f"Error on line '{line.text[:10]}...': {str(e)}", type="negative")
             print(f"Gen Error: {e}")
@@ -317,7 +370,7 @@ async def _process_audio_generation(project_name: str, lines: List[LineData], co
         with open(metadata_path, "w", encoding="utf-8") as f:
             json.dump(metadata_list, f, indent=4, ensure_ascii=False)
         ui.notify(f"Successfully generated {len(new_entries)} files.", type="positive")
-    
+
 
 async def generate_lines_list(
     text_area: ui.textarea,
@@ -326,7 +379,7 @@ async def generate_lines_list(
     speaker_list_container: ui.column,
     project_input: ui.input,
     controls_dict: dict,
-    language_val: str
+    language_val: str,
 ):
     if project_input.value is None:
         ui.notify("Missing project selection.", type="negative")
@@ -356,12 +409,14 @@ async def generate_lines_list(
     parsed_lines = _parse_lines(script, is_single_mode, single_voice_val, voice_map)
 
     try:
-        await _process_audio_generation(project_input.value, parsed_lines, controls_dict, language_val)
+        await _process_audio_generation(
+            project_input.value, parsed_lines, controls_dict, language_val
+        )
     except Exception as e:
         ui.notify(f"Error generating audio: {str(e)}", type="negative")
         return
 
-    _render_lines_grid(lines_container, parsed_lines)
+    _render_lines_grid(lines_container, parsed_lines, project_input.value, audio_player)
 
 
 def detect_speakers(
@@ -471,7 +526,7 @@ def audiobook_creation_tab(tab_object: ui.tab):
                     )
                     .classes("flex-grow")
                     .props("outlined dense color=indigo new-value-mode='add-unique'")
-                    .on('focus', lambda: refresh_project_options(project_select))
+                    .on("focus", lambda: refresh_project_options(project_select))
                 )
 
             with ui.row().classes("flex flex-wrap justify-start w-full gap-6"):
@@ -491,18 +546,20 @@ def audiobook_creation_tab(tab_object: ui.tab):
                             .props("rows=20 outlined dense")
                         )
 
-                        language_select = ui.select(
-                            options=[], 
-                            value=None, 
-                            label="Language"
-                        ).classes("w-full mb-2").props("outlined dense")
+                        language_select = (
+                            ui.select(options=[], value=None, label="Language")
+                            .classes("w-full mb-2")
+                            .props("outlined dense")
+                        )
 
                         model_watcher = ui.input().classes("hidden")
                         model_watcher.bind_value_from(app_state, "active_model")
                         model_watcher.on_value_change(
                             lambda e: update_language_dropdown(language_select, e.value)
                         )
-                        update_language_dropdown(language_select, app_state.active_model)
+                        update_language_dropdown(
+                            language_select, app_state.active_model
+                        )
 
                 with ui.column().classes(Style.half_screen_column):
                     with ui.card().classes(Style.standard_border + " h-[510px]"):
@@ -567,7 +624,7 @@ def audiobook_creation_tab(tab_object: ui.tab):
                                     speaker_list_container=speaker_list_container,
                                     project_input=project_select,
                                     controls_dict=chatterbox_ui_controls,
-                                    language_val=language_select.value
+                                    language_val=language_select.value,
                                 ),
                             ).classes(Style.small_button + " flex-grow").props(
                                 "color=indigo"
