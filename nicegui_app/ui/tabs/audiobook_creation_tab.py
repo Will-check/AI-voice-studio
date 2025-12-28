@@ -363,9 +363,10 @@ def _render_line_row(item: LineData, project_name: str, generator_callback):
     ui.number(value=0.5, format="%.1f", step=0.1, min=0).classes("w-full").props(
         "outlined dense"
     )
+    current_limit = _get_current_model_max_chars()
     text_input = (
         ui.textarea(value=item.text)
-        .props("rows=1 autogrow outlined dense")
+        .props(f"rows=1 autogrow outlined dense maxlength='{current_limit}' counter")
         .classes("w-full text-sm")
     )
 
