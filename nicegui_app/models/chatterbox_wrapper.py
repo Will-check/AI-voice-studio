@@ -123,14 +123,6 @@ def generate_tts_audio(
 
     print(f"Generating audio for text: '{text_input[:50]}...'")
 
-    print("exaggeration_input:", exaggeration_input)
-    print("temperature_input:", temperature_input)
-    print("seed_num_input:", seed_num_input)
-    print("cfg_input:", cfg_input)
-    print("repetition_penalty_input:", repetition_penalty_input)
-    print("min_p_input:", min_p_input)
-    print("top_p_input:", top_p_input)
-
     raw_wav = current_model.generate(
         text_input[:MAX_CHARS],  # Truncate text to max chars
         language_id=language_id,

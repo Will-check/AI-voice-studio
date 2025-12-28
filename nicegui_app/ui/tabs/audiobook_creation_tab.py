@@ -787,13 +787,7 @@ def audiobook_creation_tab(tab_object: ui.tab):
                             ).classes("w-full mt-2").props("color=red")
 
             with ui.row().classes("w-full gap-6"):
-                get_bound_model_column(app_state, model_name=None)
-                with get_bound_model_column(app_state, "Chatterbox"):
-                    chatterbox_ui_controls = chatterbox_controls(
-                        include_audio_input=False
-                    )
-
-                with ui.column().classes(Style.half_screen_column):
+                with ui.column().classes("w-full"):
                     with ui.card().classes(Style.standard_border):
 
                         async def row_generation_handler(
@@ -860,3 +854,9 @@ def audiobook_creation_tab(tab_object: ui.tab):
                             )
 
                         lines_list_container = ui.column().classes("w-full mt-4")
+
+                get_bound_model_column(app_state, "w-full", model_name=None)
+                with get_bound_model_column(app_state, "w-full", "Chatterbox"):
+                    chatterbox_ui_controls = chatterbox_controls(
+                        include_audio_input=False
+                    )

@@ -19,8 +19,8 @@ def render_empty_model_state():
         ).classes("text-center text-gray-500")
 
 
-def get_bound_model_column(app_state, model_name: str = None):
-    column = ui.column().classes(Style.half_screen_column)
+def get_bound_model_column(app_state, classes, model_name: str = None):
+    column = ui.column().classes(classes)
 
     if model_name:
         is_model_selected = lambda v: v == model_name

@@ -86,8 +86,8 @@ def single_generation_tab(tab_object: ui.tab):
 
     with ui.tab_panel(tab_object).classes("w-full"):
         with ui.row().classes("w-full gap-6"):
-            get_bound_model_column(app_state, model_name=None)
-            with get_bound_model_column(app_state, "Chatterbox"):
+            get_bound_model_column(app_state, Style.half_screen_column, model_name=None)
+            with get_bound_model_column(app_state, Style.half_screen_column, "Chatterbox"):
                 chatterbox_ui_controls = chatterbox_controls()
 
             # --- Right Column: Input and Output
