@@ -21,6 +21,7 @@ import json
 import os
 import re
 import scipy.io.wavfile as wavfile
+import shutil
 import time
 
 
@@ -73,15 +74,40 @@ def _load_project_metadata(project_name: str) -> List[LineData]:
         return []
 
 
+def _cleanup_temp_files(project_name: str):
+    if not project_name:
+        return
+
+    project_path = os.path.join(DEFAULT_PROJECT_DIRECTORY, project_name)
+    if not os.path.exists(project_path):
+        return
+
+    count = 0
+    try:
+        for filename in os.listdir(project_path):
+            if filename.startswith("temp_"):
+                file_path = os.path.join(project_path, filename)
+                try:
+                    os.remove(file_path)
+                    count += 1
+                except OSError as e:
+                    print(f"Error removing temp file {filename}: {e}")
+        
+        if count > 0:
+            print(f"Cleaned up {count} temporary files in project '{project_name}'.")
+            
+    except Exception as e:
+        print(f"Error during cleanup: {e}")
+
+
 def on_project_change(
-    event, lines_container: ui.column, directory_path: str = DEFAULT_PROJECT_DIRECTORY
+    event, lines_container: ui.column, regen_handler, directory_path: str = DEFAULT_PROJECT_DIRECTORY
 ):
     project_name = event.value
-
     _ensure_project_exists(project_name=project_name)
-
+    _cleanup_temp_files(project_name)
     loaded_lines = _load_project_metadata(project_name)
-    _render_lines_grid(lines_container, loaded_lines, project_name)
+    _render_lines_grid(lines_container, loaded_lines, project_name, regen_handler)
 
 
 def get_existing_projects(directory_path: str = DEFAULT_PROJECT_DIRECTORY) -> List[str]:
@@ -146,55 +172,126 @@ def _parse_lines(
     return results
 
 
-def _render_line_row(item: LineData, project_name: str):
+def _update_metadata_entry(project_name, file_name, new_text, new_voice, new_params):
+    project_path = os.path.join(DEFAULT_PROJECT_DIRECTORY, project_name)
+    metadata_path = os.path.join(project_path, "metadata.json")
+    
+    if not os.path.exists(metadata_path):
+        return
+
+    try:
+        with open(metadata_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        
+        updated = False
+        for entry in data:
+            if entry.get("file_name") == file_name:
+                entry["text"] = new_text
+                entry["voice"] = new_voice
+                entry["params"] = new_params
+                updated = True
+                break
+        
+        if updated:
+            with open(metadata_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=4, ensure_ascii=False)
+                
+    except Exception as e:
+        print(f"Error updating metadata: {e}")
+
+
+def _extract_control_values(controls_ui: dict) -> dict:
+    return {k: v.value for k, v in controls_ui.items()}
+
+
+def _render_line_row(item: LineData, project_name: str, generator_callback):
     with ui.row().classes(Style.centered_row):
         ui.checkbox()
+    ui.label(item.speaker).classes("text-center font-medium")
 
-    ui.label(item.speaker).classes("text-center")
+    voice_select = ui.select(options=get_audio_files(), value=item.voice).classes("w-full").props("outlined dense")
 
-    ui.select(options=get_audio_files(), value=item.voice).classes("w-full").props(
-        "outlined dense"
-    )
-
-    def play_line():
-        if not item.file_name:
-            ui.notify("No audio file generated for this line.", type="warning")
-            return
-
-        # Adding ?t=time, to bypass browser cache
-        source_url = f"/projects/{project_name}/{item.file_name}?t={time.time()}"
-
-        ui.run_javascript(
-            f"""
-            if (window.currentAudio) {{
-                window.currentAudio.pause();
-                window.currentAudio.currentTime = 0;
-            }}
-            window.currentAudio = new Audio("{source_url}");
-            window.currentAudio.play();
-        """
-        )
+    def play_audio_file(fname):
+        if not fname: return
+        url = f"/projects/{project_name}/{fname}?t={time.time()}"
+        ui.run_javascript(f"var a = new Audio('{url}'); a.play();")
 
     with ui.row().classes(Style.centered_row):
-        ui.button(icon="play_arrow", on_click=play_line).props(
-            "flat round color=primary"
-        )
+        ui.button(icon="play_arrow", on_click=lambda: play_audio_file(item.file_name)).props("flat round color=primary")
 
-    with ui.row().classes(Style.centered_row):
-        ui.button(
-            icon="sync", on_click=lambda: ui.notify(f"Regen {item.speaker}")
-        ).props("flat round color=secondary")
+    with ui.row().classes("items-center justify-center gap-1 min-w-[120px]"):
+        candidate_state = {"path": None, "params": None}
+        regen_btn = ui.button(icon="sync").props("flat round color=secondary").tooltip("Regenerate")
+        spinner = ui.spinner(size="2em")
+        spinner.visible = False
+        actions_row = ui.row().classes("hidden gap-1")
+        
+        with actions_row:
+            ui.button(icon="volume_up", on_click=lambda: play_audio_file(os.path.basename(candidate_state["path"])))\
+                .props("flat round color=green").tooltip("Odsłuchaj nowy")
+            
+            async def on_save():
+                if candidate_state["path"] and os.path.exists(candidate_state["path"]):
+                    original_path = os.path.join(DEFAULT_PROJECT_DIRECTORY, project_name, item.file_name)
+                    shutil.move(candidate_state["path"], original_path)
+                    
+                    _update_metadata_entry(
+                        project_name, item.file_name, 
+                        text_input.value, voice_select.value, candidate_state["params"]
+                    )
+                    
+                    actions_row.set_visibility(False)
+                    regen_btn.set_visibility(True)
+                    ui.notify("Zapisano!", type="positive", timeout=1000)
 
-    ui.number(value=0.5, format="%.1f", step=0.1, min=0).classes("w-full").props(
-        "outlined dense"
-    )
+            ui.button(icon="check", on_click=on_save).props("flat round color=green").tooltip("Zastąp oryginał")
+            
+            def on_cancel():
+                actions_row.set_visibility(False)
+                regen_btn.set_visibility(True)
 
-    ui.label(item.text).classes("text-left")
+                temp_path = candidate_state.get("path")
+                if temp_path and os.path.exists(temp_path):
+                    try:
+                        os.remove(temp_path)
+                        candidate_state["path"] = None
+                    except Exception as e:
+                        print(f"Error removing temp file: {e}")
+            
+            ui.button(icon="close", on_click=on_cancel).props("flat round color=red").tooltip("Odrzuć")
+
+        async def on_regen_click():
+            regen_btn.set_visibility(False)
+            actions_row.set_visibility(False)
+            spinner.set_visibility(True)
+
+            try:
+                result = await generator_callback(
+                    text=text_input.value,
+                    voice=voice_select.value,
+                    original_filename=item.file_name
+                )
+                
+                if result:
+                    candidate_state["path"] = result["path"]
+                    candidate_state["params"] = result["params"]
+                    spinner.set_visibility(False)
+                    actions_row.set_visibility(True)
+                else:
+                    spinner.set_visibility(False)
+                    regen_btn.set_visibility(True)
+            except Exception:
+                spinner.set_visibility(False)
+                regen_btn.set_visibility(True)
+
+        regen_btn.on("click", on_regen_click)
+    ui.number(value=0.5, format="%.1f", step=0.1, min=0).classes("w-full").props("outlined dense")
+    text_input = ui.textarea(value=item.text).props("rows=1 autogrow outlined dense").classes("w-full text-sm")
 
     ui.separator().classes("col-span-full")
 
 
-def _render_lines_grid(container: ui.column, lines: List[LineData], project_name: str):
+def _render_lines_grid(container: ui.column, lines: List[LineData], project_name: str, regen_handler):
     container.clear()
 
     if not lines:
@@ -203,7 +300,7 @@ def _render_lines_grid(container: ui.column, lines: List[LineData], project_name
     with container:
         ui.label(f"Project content ({len(lines)} lines):").classes(Style.standard_label)
 
-        cols = "auto 130px minmax(150px, 1fr) auto auto 110px 3fr"
+        cols = "auto 130px minmax(150px, 1fr) auto auto 45px 3fr"
         with ui.grid(columns=cols).classes("items-center w-full gap-x-10 gap-y-1"):
             headers = [
                 "Exclude",
@@ -223,7 +320,7 @@ def _render_lines_grid(container: ui.column, lines: List[LineData], project_name
             ui.separator().classes("my-1 col-span-full")
 
             for item in lines:
-                _render_line_row(item, project_name)
+                _render_line_row(item, project_name, regen_handler)
 
 
 def _get_next_sequence_number(metadata_list: List[Dict], project_name: str) -> int:
@@ -244,13 +341,13 @@ def _get_next_sequence_number(metadata_list: List[Dict], project_name: str) -> i
 def _generate_and_save_task(
     text: str, voice_path: str, output_path: str, language: str, controls: dict
 ):
-    exaggeration = controls["exaggeration"].value
-    temperature = controls["temperature"].value
-    cfg_val = controls["cfg"].value
-    seed_val = int(controls["seed"].value)
-    top_p_val = controls["top_p"].value
-    min_p_val = controls["min_p"].value
-    rep_penalty_val = controls["repetition_penalty"].value
+    exaggeration = controls["exaggeration"]
+    temperature = controls["temperature"]
+    cfg_val = controls["cfg"]
+    seed_val = int(controls["seed"])
+    top_p_val = controls["top_p"]
+    min_p_val = controls["min_p"]
+    rep_penalty_val = controls["repetition_penalty"]
 
     sr, audio_array = generate_tts_audio(
         text_input=text,
@@ -319,6 +416,8 @@ async def _process_audio_generation(
 
     ui.notify(f"Starting generation of {len(lines)} lines...", type="info")
 
+    control_values = _extract_control_values(controls_dict)
+
     for line in lines:
         if not line.voice:
             ui.notify(
@@ -339,7 +438,7 @@ async def _process_audio_generation(
                 voice_path=voice_path,
                 output_path=file_path,
                 language=language,
-                controls=controls_dict,
+                controls=control_values,
             )
 
             line.file_name = file_name
@@ -380,6 +479,7 @@ async def generate_lines_list(
     project_input: ui.input,
     controls_dict: dict,
     language_val: str,
+    regen_handler,
 ):
     if project_input.value is None:
         ui.notify("Missing project selection.", type="negative")
@@ -416,7 +516,7 @@ async def generate_lines_list(
         ui.notify(f"Error generating audio: {str(e)}", type="negative")
         return
 
-    _render_lines_grid(lines_container, parsed_lines, project_input.value, audio_player)
+    _render_lines_grid(lines_container, parsed_lines, project_input.value, regen_handler)
 
 
 def detect_speakers(
@@ -522,7 +622,7 @@ def audiobook_creation_tab(tab_object: ui.tab):
                         options=get_existing_projects(),
                         label="Select folder / project name",
                         with_input=True,
-                        on_change=lambda e: on_project_change(e, lines_list_container),
+                        on_change=lambda e: on_project_change(e, lines_list_container, row_generation_handler),
                     )
                     .classes("flex-grow")
                     .props("outlined dense color=indigo new-value-mode='add-unique'")
@@ -610,6 +710,33 @@ def audiobook_creation_tab(tab_object: ui.tab):
 
                 with ui.column().classes(Style.half_screen_column):
                     with ui.card().classes(Style.standard_border):
+
+                        async def row_generation_handler(text, voice, original_filename):
+                            if not language_select.value:
+                                ui.notify("Wybierz język!", type="negative")
+                                return None
+                            
+                            project_name = project_select.value
+                            temp_filename = f"temp_{int(time.time())}_{original_filename}"
+                            temp_path = os.path.join(DEFAULT_PROJECT_DIRECTORY, project_name, temp_filename)
+                            voice_path = os.path.join(DEFAULT_VOICE_LIBRARY, voice)
+                            
+                            ctrl_values = _extract_control_values(chatterbox_ui_controls)
+                            
+                            try:
+                                params = await run.io_bound(
+                                    _generate_and_save_task,
+                                    text=text,
+                                    voice_path=voice_path,
+                                    output_path=temp_path,
+                                    language=language_select.value,
+                                    controls=ctrl_values
+                                )
+                                return {"path": temp_path, "params": params}
+                            except Exception as e:
+                                ui.notify(f"Błąd: {e}", type="negative")
+                                return None
+
                         with ui.row().classes(Style.centered_row + " pt-4"):
                             ui.label("Output Audio").classes(Style.standard_label)
                             ui.audio("").classes("w-full")
@@ -625,6 +752,7 @@ def audiobook_creation_tab(tab_object: ui.tab):
                                     project_input=project_select,
                                     controls_dict=chatterbox_ui_controls,
                                     language_val=language_select.value,
+                                    regen_handler=row_generation_handler,
                                 ),
                             ).classes(Style.small_button + " flex-grow").props(
                                 "color=indigo"
