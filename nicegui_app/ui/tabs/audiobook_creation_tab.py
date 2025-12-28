@@ -227,8 +227,7 @@ def _render_line_row(item: LineData, project_name: str, generator_callback):
         actions_row = ui.row().classes("hidden gap-1")
         
         with actions_row:
-            ui.button(icon="volume_up", on_click=lambda: play_audio_file(os.path.basename(candidate_state["path"])))\
-                .props("flat round color=green").tooltip("Odsłuchaj nowy")
+            ui.button(icon="volume_up", on_click=lambda: play_audio_file(os.path.basename(candidate_state["path"]))).props("flat round color=green").tooltip("Listen to the new file ")
             
             async def on_save():
                 if candidate_state["path"] and os.path.exists(candidate_state["path"]):
@@ -244,7 +243,7 @@ def _render_line_row(item: LineData, project_name: str, generator_callback):
                     regen_btn.set_visibility(True)
                     ui.notify("Zapisano!", type="positive", timeout=1000)
 
-            ui.button(icon="check", on_click=on_save).props("flat round color=green").tooltip("Zastąp oryginał")
+            ui.button(icon="check", on_click=on_save).props("flat round color=green").tooltip("Overwrite")
             
             def on_cancel():
                 actions_row.set_visibility(False)
@@ -258,7 +257,7 @@ def _render_line_row(item: LineData, project_name: str, generator_callback):
                     except Exception as e:
                         print(f"Error removing temp file: {e}")
             
-            ui.button(icon="close", on_click=on_cancel).props("flat round color=red").tooltip("Odrzuć")
+            ui.button(icon="close", on_click=on_cancel).props("flat round color=red").tooltip("Reject")
 
         async def on_regen_click():
             regen_btn.set_visibility(False)
@@ -519,6 +518,40 @@ async def generate_lines_list(
     _render_lines_grid(lines_container, parsed_lines, project_input.value, regen_handler)
 
 
+def confirm_delete_project(project_select: ui.select, lines_list_container: ui.column):
+    name = project_select.value
+    if not name:
+        ui.notify("No project selected", type="warning")
+        return
+
+    with ui.dialog() as dialog, ui.card():
+        ui.label(f"Are you sure you want to delete proejct '{name}'?").classes("text-lg font-bold")
+        ui.label("This operation would remove all files from this project.").classes("text-red-500")
+        
+        def perform_delete():
+            project_path = os.path.join(DEFAULT_PROJECT_DIRECTORY, name)
+            if os.path.exists(project_path):
+                try:
+                    shutil.rmtree(project_path)
+                    ui.notify(f"Project '{name}' has been deleted.", type="positive")
+                    
+                    project_select.value = None
+                    refresh_project_options(project_select)
+                    
+                    if lines_list_container:
+                        lines_list_container.clear()
+                    
+                except Exception as e:
+                    ui.notify(f"Delete error: {e}", type="negative")
+            dialog.close()
+
+        with ui.row().classes("w-full justify-end"):
+            ui.button("Cancel", on_click=dialog.close).props("flat")
+            ui.button("Delete", color="red", on_click=perform_delete)
+    
+    dialog.open()
+
+
 def detect_speakers(
     textarea_ref: ui.textarea,
     speaker_list_container: ui.column,
@@ -628,6 +661,12 @@ def audiobook_creation_tab(tab_object: ui.tab):
                     .props("outlined dense color=indigo new-value-mode='add-unique'")
                     .on("focus", lambda: refresh_project_options(project_select))
                 )
+
+                ui.button(
+                    icon="delete", 
+                    color="red", 
+                    on_click=lambda: confirm_delete_project(project_select, lines_list_container)
+                ).props("flat round").tooltip("Delete project")
 
             with ui.row().classes("flex flex-wrap justify-start w-full gap-6"):
                 with ui.column().classes(Style.half_screen_column):
