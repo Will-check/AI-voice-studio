@@ -3,7 +3,10 @@ from typing import Optional, List, Dict
 
 from nicegui import ui, run
 from nicegui_app.logic.app_state import get_state
-from nicegui_app.models.chatterbox_wrapper import generate_tts_audio
+from nicegui_app.models.chatterbox_wrapper import (
+    generate_tts_audio,
+    MAX_CHARS as CHATTERBOX_MAX_CHARS,
+)
 from nicegui_app.logic.common_logic import (
     get_audio_files,
     update_language_dropdown,
@@ -150,8 +153,48 @@ def _get_voice_map_from_ui(container: ui.column) -> Dict[str, str]:
     return voice_map
 
 
+def _get_current_model_max_chars() -> int:
+    app_state = get_state()
+    model_name = app_state.active_model
+
+    if model_name == "Chatterbox":
+        return CHATTERBOX_MAX_CHARS
+
+    return 300
+
+
+def _split_text_preserving_words(text: str, max_length: int) -> List[str]:
+    text = text.strip()
+    if len(text) <= max_length:
+        return [text]
+
+    chunks = []
+    while len(text) > max_length:
+        split_index = text[:max_length].rfind(" ")
+
+        if split_index == -1:
+            # Sanity check, probably impossible situation where we have 1 large word
+            # We're cutting hard on the limit
+            split_index = max_length
+
+        chunk = text[:split_index].strip()
+        if chunk:
+            chunks.append(chunk)
+
+        text = text[split_index:].strip()
+
+    if text:
+        chunks.append(text)
+
+    return chunks
+
+
 def _parse_lines(
-    script: str, is_single_mode: bool, single_voice: str, voice_map: Dict[str, str]
+    script: str,
+    is_single_mode: bool,
+    single_voice: str,
+    voice_map: Dict[str, str],
+    max_chars,
 ) -> List[LineData]:
     results = []
     for line in script.split("\n"):
@@ -160,15 +203,20 @@ def _parse_lines(
             continue
 
         if is_single_mode:
-            results.append(
-                LineData(speaker="Single voice", text=line, voice=single_voice)
-            )
+            chunks = _split_text_preserving_words(line, max_chars)
+            for chunk in chunks:
+                results.append(
+                    LineData(speaker="Single voice", text=chunk, voice=single_voice)
+                )
         else:
             match = re.match(r"^\s*\[([A-Za-z0-9\s]+)\]\s*(.*)", line)
             if match:
                 speaker, text = [x.strip() for x in match.groups()]
                 voice = voice_map.get(speaker.capitalize())
-                results.append(LineData(speaker=speaker, text=text, voice=voice))
+                chunks = _split_text_preserving_words(text, max_chars)
+
+                for chunk in chunks:
+                    results.append(LineData(speaker=speaker, text=chunk, voice=voice))
             else:
                 ui.notify(f"Skipped line without tag: {line}", type="negative")
 
@@ -246,7 +294,7 @@ def _render_line_row(item: LineData, project_name: str, generator_callback):
                 on_click=lambda: play_audio_file(
                     os.path.basename(candidate_state["path"])
                 ),
-            ).props("flat round color=green").tooltip("Listen to the new file ")
+            ).props("flat round color=green").tooltip("Listen to the new file")
 
             async def on_save():
                 if candidate_state["path"] and os.path.exists(candidate_state["path"]):
@@ -541,7 +589,10 @@ async def generate_lines_list(
         if not voice_map:
             ui.notify("No speakers configured or voices missing.", type="negative")
 
-    parsed_lines = _parse_lines(script, is_single_mode, single_voice_val, voice_map)
+    max_chars = _get_current_model_max_chars()
+    parsed_lines = _parse_lines(
+        script, is_single_mode, single_voice_val, voice_map, max_chars
+    )
 
     try:
         await _process_audio_generation(
