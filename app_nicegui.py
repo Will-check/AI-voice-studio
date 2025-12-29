@@ -8,6 +8,7 @@ from nicegui_app.ui.styles import Style
 
 app.add_static_files("/voice_library", "voice_library")
 app.add_static_files("/projects", "projects")
+app.add_static_files('/output', 'output')
 
 app_state = get_state()
 

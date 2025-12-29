@@ -12,6 +12,7 @@ from nicegui_app.logic.common_logic import (
     update_language_dropdown,
     DEFAULT_PROJECT_DIRECTORY,
     DEFAULT_VOICE_LIBRARY,
+    DEFAULT_OUTPUT_DIRECTORY,
 )
 from nicegui_app.ui.common_ui import (
     get_bound_model_column,
@@ -21,6 +22,7 @@ from nicegui_app.ui.models.chatterbox_ui import chatterbox_controls
 from nicegui_app.ui.styles import Style
 
 import json
+import numpy as np
 import os
 import re
 import scipy.io.wavfile as wavfile
@@ -107,13 +109,16 @@ def on_project_change(
     event,
     lines_container: ui.column,
     regen_handler,
+    ui_lines: List[LineData],
     directory_path: str = DEFAULT_PROJECT_DIRECTORY,
 ):
     project_name = event.value
     _ensure_project_exists(project_name=project_name)
     _cleanup_temp_files(project_name)
-    loaded_lines = _load_project_metadata(project_name)
-    _render_lines_grid(lines_container, loaded_lines, project_name, regen_handler)
+    new_lines = _load_project_metadata(project_name)
+    ui_lines.clear()
+    ui_lines.extend(new_lines)
+    _render_lines_grid(lines_container, ui_lines, project_name, regen_handler)
 
 
 def get_existing_projects(directory_path: str = DEFAULT_PROJECT_DIRECTORY) -> List[str]:
@@ -313,7 +318,7 @@ def _render_line_row(item: LineData, project_name: str, generator_callback):
 
                     actions_row.set_visibility(False)
                     regen_btn.set_visibility(True)
-                    ui.notify("Zapisano!", type="positive", timeout=1000)
+                    ui.notify("Replaced!", type="positive", timeout=1000)
 
             ui.button(icon="check", on_click=on_save).props(
                 "flat round color=green"
@@ -360,9 +365,9 @@ def _render_line_row(item: LineData, project_name: str, generator_callback):
                 regen_btn.set_visibility(True)
 
         regen_btn.on("click", on_regen_click)
-    ui.number(value=0.5, format="%.1f", step=0.1, min=0).classes("w-full").props(
+    ui.number(value=item.pause, format="%.1f", step=0.1, min=0).classes("w-full").props(
         "outlined dense"
-    )
+    ).on_value_change(lambda e: setattr(item, "pause", e.value))
     current_limit = _get_current_model_max_chars()
     text_input = (
         ui.textarea(value=item.text)
@@ -564,6 +569,7 @@ async def generate_lines_list(
     controls_dict: dict,
     language_val: str,
     regen_handler,
+    ui_lines: List[LineData],
 ):
     if project_input.value is None:
         ui.notify("Missing project selection.", type="negative")
@@ -574,8 +580,6 @@ async def generate_lines_list(
     if not script:
         ui.notify("Text area is empty.", type="negative")
         return
-
-    lines_container.clear()
 
     is_single_mode = single_voice_profile.enabled
     single_voice_val = single_voice_profile.value
@@ -594,18 +598,19 @@ async def generate_lines_list(
     parsed_lines = _parse_lines(
         script, is_single_mode, single_voice_val, voice_map, max_chars
     )
+    ui_lines.clear()
+    ui_lines.extend(parsed_lines)
 
     try:
         await _process_audio_generation(
-            project_input.value, parsed_lines, controls_dict, language_val
+            project_input.value, ui_lines, controls_dict, language_val
         )
     except Exception as e:
         ui.notify(f"Error generating audio: {str(e)}", type="negative")
         return
 
-    _render_lines_grid(
-        lines_container, parsed_lines, project_input.value, regen_handler
-    )
+    lines_container.clear()
+    _render_lines_grid(lines_container, ui_lines, project_input.value, regen_handler)
 
 
 def confirm_delete_project(project_select: ui.select, lines_list_container: ui.column):
@@ -737,8 +742,87 @@ def speaker_row(
     return profile_select
 
 
+def _merge_and_save_audio(project_name: str, ui_lines: List[LineData]) -> Optional[str]:
+    if not ui_lines:
+        raise ValueError("No speaker lines available.")
+
+    if not project_name:
+        raise ValueError("No project selected.")
+
+    metadata_lines = _load_project_metadata(project_name)
+    if not metadata_lines:
+        raise ValueError("Project is empty or metadata missing.")
+
+    ui_pauses = {line.file_name: line.pause for line in ui_lines if line.file_name}
+    project_path = os.path.join(DEFAULT_PROJECT_DIRECTORY, project_name)
+
+    if not os.path.exists(DEFAULT_OUTPUT_DIRECTORY):
+        os.makedirs(DEFAULT_OUTPUT_DIRECTORY)
+
+    combined_audio = []
+    sample_rate = None
+
+    for line in metadata_lines:
+        if not line.file_name:
+            continue
+
+        file_path = os.path.join(project_path, line.file_name)
+        if not os.path.exists(file_path):
+            print(f"Skipping missing file: {line.file_name}")
+            continue
+
+        try:
+            sr, data = wavfile.read(file_path)
+
+            if sample_rate is None:
+                sample_rate = sr
+
+            combined_audio.append(data)
+            pause_duration = ui_pauses.get(line.file_name, line.pause)
+
+            if pause_duration > 0:
+                silence_samples = int(pause_duration * sample_rate)
+                if silence_samples > 0:
+                    silence = np.zeros(silence_samples, dtype=data.dtype)
+                    combined_audio.append(silence)
+
+        except Exception as e:
+            print(f"Error processing {line.file_name}: {e}")
+
+    if not combined_audio:
+        raise ValueError("No valid audio files found to merge.")
+
+    final_wave = np.concatenate(combined_audio)
+    output_filename = f"{project_name}_merged.wav"
+    output_path = os.path.join(DEFAULT_OUTPUT_DIRECTORY, output_filename)
+
+    wavfile.write(output_path, sample_rate, final_wave)
+    return output_filename
+
+
+async def handle_merge_click(
+    project_select: ui.select, audio_player: ui.audio, current_ui_lines: List[LineData]
+):
+    project_name = project_select.value
+    if not project_name:
+        ui.notify("Please select a project first.", type="negative")
+        return
+
+    ui.notify("Merging audio files...", type="info")
+
+    result_filename = await run.io_bound(
+        _merge_and_save_audio, project_name, current_ui_lines
+    )
+
+    if result_filename:
+        new_url = f"/output/{result_filename}?t={time.time()}"
+        audio_player.source = new_url
+        audio_player.update()
+
+
 def audiobook_creation_tab(tab_object: ui.tab):
     app_state = get_state()
+    current_lines: List[LineData] = []
 
     with ui.tab_panel(tab_object).classes("w-full p-0 m-0"):
         with ui.column().classes("w-full gap-6 p-6"):
@@ -750,7 +834,10 @@ def audiobook_creation_tab(tab_object: ui.tab):
                         label="Select folder / project name",
                         with_input=True,
                         on_change=lambda e: on_project_change(
-                            e, lines_list_container, row_generation_handler
+                            e,
+                            lines_list_container,
+                            row_generation_handler,
+                            current_lines,
                         ),
                     )
                     .classes("flex-grow")
@@ -846,7 +933,7 @@ def audiobook_creation_tab(tab_object: ui.tab):
                             text, voice, original_filename
                         ):
                             if not language_select.value:
-                                ui.notify("Wybierz język!", type="negative")
+                                ui.notify("Select language!", type="negative")
                                 return None
 
                             project_name = project_select.value
@@ -873,12 +960,12 @@ def audiobook_creation_tab(tab_object: ui.tab):
                                 )
                                 return {"path": temp_path, "params": params}
                             except Exception as e:
-                                ui.notify(f"Błąd: {e}", type="negative")
+                                ui.notify(f"Error: {e}", type="negative")
                                 return None
 
                         with ui.row().classes(Style.centered_row + " pt-4"):
                             ui.label("Output Audio").classes(Style.standard_label)
-                            ui.audio("").classes("w-full")
+                            output_audio_player = ui.audio("").classes("w-full")
 
                         with ui.row().classes(Style.centered_row + " pt-4"):
                             ui.button(
@@ -892,14 +979,16 @@ def audiobook_creation_tab(tab_object: ui.tab):
                                     controls_dict=chatterbox_ui_controls,
                                     language_val=language_select.value,
                                     regen_handler=row_generation_handler,
+                                    ui_lines=current_lines,
                                 ),
                             ).classes(Style.small_button + " flex-grow").props(
                                 "color=indigo"
                             )
+
                             ui.button(
                                 "Merge audio parts",
-                                on_click=lambda: ui.notify(
-                                    "Merge audio parts - not implemented yet!"
+                                on_click=lambda: handle_merge_click(
+                                    project_select, output_audio_player, current_lines
                                 ),
                             ).classes(Style.small_button + " flex-grow").props(
                                 "color=indigo"

@@ -5,7 +5,7 @@ from typing import List
 
 DEFAULT_VOICE_LIBRARY = "./voice_library"
 DEFAULT_PROJECT_DIRECTORY = "./projects"
-
+DEFAULT_OUTPUT_DIRECTORY = "./output"
 
 def update_language_dropdown(target_select: ui.select, model_name: str):
     if model_name == "Chatterbox":
