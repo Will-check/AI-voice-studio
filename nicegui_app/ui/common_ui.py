@@ -1,6 +1,6 @@
 from nicegui import ui
 from nicegui_app.ui.styles import Style
-from nicegui_app.logic.common_logic import update_audio_dropdown, load_audio_to_player
+from nicegui_app.logic.common_logic import update_audio_dropdown
 import os
 
 

@@ -65,12 +65,14 @@ def update_audio_dropdown(
 
 
 def load_audio_to_player(
-    event, audio_player, player_container, uploader_container, profile_select=None
+    event, audio_player, player_container, uploader_container, base_path, profile_select=None,
 ):
-    selected_path = event.value
-    if selected_path:
-        web_source = selected_path.replace("./", "/")
-        audio_player.source = web_source
+    selected_file = event.value
+    if selected_file:
+        web_source = selected_file.replace("./", "/")
+        full_path = os.path.join(base_path, web_source)
+
+        audio_player.source = full_path
         audio_player.update()
 
         player_container.visible = True

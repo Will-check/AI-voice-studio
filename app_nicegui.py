@@ -92,7 +92,7 @@ with ui.column().classes("w-full gap-5 px-5"):
         ).classes("w-48 h-12 ml-6 ml-auto").props("dense outlined color=indigo")
 
     # 3. Content Panels
-    with ui.tab_panels(tabs, value=tab_audio).classes("w-full"):
+    with ui.tab_panels(tabs, value=tab_gen).classes("w-full"):
         single_generation_tab(tab_gen)
         audiobook_creation_tab(tab_audio)
 

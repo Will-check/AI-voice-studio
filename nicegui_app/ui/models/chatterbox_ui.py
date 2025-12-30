@@ -13,7 +13,7 @@ from nicegui_app.models.chatterbox_wrapper import (
     min_p,
     repetition_penalty,
 )
-from nicegui_app.logic.common_logic import update_audio_dropdown, load_audio_to_player
+from nicegui_app.logic.common_logic import update_audio_dropdown, load_audio_to_player, DEFAULT_VOICE_LIBRARY
 
 
 def _render_chatterbox_sliders(controls):
@@ -122,6 +122,7 @@ def _render_chatterbox_sliders(controls):
 
 def chatterbox_controls(include_audio_input=True):
     controls = {}
+    SAMPLES_PATH = "models/chatterbox/samples"
 
     with ui.column().classes(Style.standard_border):
         if include_audio_input:
@@ -137,7 +138,7 @@ def chatterbox_controls(include_audio_input=True):
                 .classes("w-full mb-4")
                 .props("outlined dense")
             )
-            update_audio_dropdown(model_voices_select, "models/chatterbox/samples")
+            update_audio_dropdown(model_voices_select, SAMPLES_PATH)
 
             audio_player, uploader_div, player_row = render_reference_audio_component(
                 controls,
@@ -147,13 +148,13 @@ def chatterbox_controls(include_audio_input=True):
 
             profile_select.on_value_change(
                 lambda e: load_audio_to_player(
-                    e, audio_player, player_row, uploader_div, model_voices_select
+                    e, audio_player, player_row, uploader_div, DEFAULT_VOICE_LIBRARY, model_voices_select
                 )
             )
 
             model_voices_select.on_value_change(
                 lambda e: load_audio_to_player(
-                    e, audio_player, player_row, uploader_div, profile_select
+                    e, audio_player, player_row, uploader_div ,SAMPLES_PATH, profile_select
                 )
             )
 
