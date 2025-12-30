@@ -1,18 +1,18 @@
-from dataclasses import dataclass
-from typing import Optional, List, Dict
+
+import json
+import os
+import re
+import shutil
+import time
+import nicegui_app.logic.tabs.audiobook_creation_logic as acl
 
 from nicegui import ui, run
 from nicegui_app.logic.app_state import get_state
-from nicegui_app.models.chatterbox_wrapper import (
-    generate_tts_audio,
-    MAX_CHARS as CHATTERBOX_MAX_CHARS,
-)
 from nicegui_app.logic.common_logic import (
     get_audio_files,
     update_language_dropdown,
     DEFAULT_PROJECT_DIRECTORY,
     DEFAULT_VOICE_LIBRARY,
-    DEFAULT_OUTPUT_DIRECTORY,
 )
 from nicegui_app.ui.common_ui import (
     get_bound_model_column,
@@ -20,127 +20,20 @@ from nicegui_app.ui.common_ui import (
 )
 from nicegui_app.ui.models.chatterbox_ui import chatterbox_controls
 from nicegui_app.ui.styles import Style
-
-import json
-import numpy as np
-import os
-import re
-import scipy.io.wavfile as wavfile
-import shutil
-import time
+from typing import List, Dict
 
 
-@dataclass
-class LineData:
-    speaker: str
-    text: str
-    voice: Optional[str]
-    file_name: Optional[str] = None
-    pause: float = 0.5
-
-
-def _ensure_project_exists(
-    project_name: str, directory_path: str = DEFAULT_PROJECT_DIRECTORY
-):
-    if not project_name:
-        return
-    project_path = os.path.join(directory_path, project_name)
-    if not os.path.isdir(project_path):
-        os.makedirs(project_path)
-        ui.notify(f"Created new project: {project_name}", type="positive")
-
-
-def _load_project_metadata(project_name: str) -> List[LineData]:
-    if not project_name:
-        return []
-
-    project_path = os.path.join(DEFAULT_PROJECT_DIRECTORY, project_name)
-    metadata_path = os.path.join(project_path, "metadata.json")
-
-    if not os.path.exists(metadata_path):
-        return []
-
-    try:
-        with open(metadata_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-
-        return [
-            LineData(
-                speaker=entry.get("speaker", "Unknown"),
-                text=entry.get("text", ""),
-                voice=entry.get("voice"),
-                file_name=entry.get("file_name"),
-                pause=entry.get("pause", 0.5),
-            )
-            for entry in data
-        ]
-    except Exception as e:
-        ui.notify(f"Error loading metadata: {e}", type="negative")
-        return []
-
-
-def _cleanup_temp_files(project_name: str):
-    if not project_name:
-        return
-
-    project_path = os.path.join(DEFAULT_PROJECT_DIRECTORY, project_name)
-    if not os.path.exists(project_path):
-        return
-
-    count = 0
-    try:
-        for filename in os.listdir(project_path):
-            if filename.startswith("temp_"):
-                file_path = os.path.join(project_path, filename)
-                try:
-                    os.remove(file_path)
-                    count += 1
-                except OSError as e:
-                    print(f"Error removing temp file {filename}: {e}")
-
-        if count > 0:
-            print(f"Cleaned up {count} temporary files in project '{project_name}'.")
-
-    except Exception as e:
-        print(f"Error during cleanup: {e}")
-
-
-def on_project_change(
-    event,
-    lines_container: ui.column,
-    regen_handler,
-    ui_lines: List[LineData],
-    directory_path: str = DEFAULT_PROJECT_DIRECTORY,
-):
-    project_name = event.value
-    _ensure_project_exists(project_name=project_name)
-    _cleanup_temp_files(project_name)
-    new_lines = _load_project_metadata(project_name)
-    ui_lines.clear()
-    ui_lines.extend(new_lines)
-    _render_lines_grid(lines_container, ui_lines, project_name, regen_handler)
-
-
-def get_existing_projects(directory_path: str = DEFAULT_PROJECT_DIRECTORY) -> List[str]:
-    if not os.path.isdir(directory_path):
-        os.makedirs(directory_path)
-
-    projects_list = [
-        name
-        for name in os.listdir(directory_path)
-        if os.path.isdir(os.path.join(directory_path, name))
-    ]
-
-    return projects_list
+def extract_control_values(controls_ui: dict) -> dict:
+    return {k: v.value for k, v in controls_ui.items()}
 
 
 def refresh_project_options(select_element: ui.select):
-    current_projects = get_existing_projects()
+    current_projects = acl.get_existing_projects()
     select_element.options = current_projects
     select_element.update()
 
 
-def _get_voice_map_from_ui(container: ui.column) -> Dict[str, str]:
+def get_voice_map_from_ui(container: ui.column) -> Dict[str, str]:
     voice_map = {}
     if not hasattr(container, "default_slot"):
         return voice_map
@@ -158,109 +51,7 @@ def _get_voice_map_from_ui(container: ui.column) -> Dict[str, str]:
     return voice_map
 
 
-def _get_current_model_max_chars() -> int:
-    app_state = get_state()
-    model_name = app_state.active_model
-
-    if model_name == "Chatterbox":
-        return CHATTERBOX_MAX_CHARS
-
-    return 300
-
-
-def _split_text_preserving_words(text: str, max_length: int) -> List[str]:
-    text = text.strip()
-    if len(text) <= max_length:
-        return [text]
-
-    chunks = []
-    while len(text) > max_length:
-        split_index = text[:max_length].rfind(" ")
-
-        if split_index == -1:
-            # Sanity check, probably impossible situation where we have 1 large word
-            # We're cutting hard on the limit
-            split_index = max_length
-
-        chunk = text[:split_index].strip()
-        if chunk:
-            chunks.append(chunk)
-
-        text = text[split_index:].strip()
-
-    if text:
-        chunks.append(text)
-
-    return chunks
-
-
-def _parse_lines(
-    script: str,
-    is_single_mode: bool,
-    single_voice: str,
-    voice_map: Dict[str, str],
-    max_chars,
-) -> List[LineData]:
-    results = []
-    for line in script.split("\n"):
-        line = line.strip()
-        if not line:
-            continue
-
-        if is_single_mode:
-            chunks = _split_text_preserving_words(line, max_chars)
-            for chunk in chunks:
-                results.append(
-                    LineData(speaker="Single voice", text=chunk, voice=single_voice)
-                )
-        else:
-            match = re.match(r"^\s*\[([A-Za-z0-9\s]+)\]\s*(.*)", line)
-            if match:
-                speaker, text = [x.strip() for x in match.groups()]
-                voice = voice_map.get(speaker.capitalize())
-                chunks = _split_text_preserving_words(text, max_chars)
-
-                for chunk in chunks:
-                    results.append(LineData(speaker=speaker, text=chunk, voice=voice))
-            else:
-                ui.notify(f"Skipped line without tag: {line}", type="negative")
-
-    return results
-
-
-def _update_metadata_entry(project_name, file_name, new_text, new_voice, new_params):
-    project_path = os.path.join(DEFAULT_PROJECT_DIRECTORY, project_name)
-    metadata_path = os.path.join(project_path, "metadata.json")
-
-    if not os.path.exists(metadata_path):
-        return
-
-    try:
-        with open(metadata_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-
-        updated = False
-        for entry in data:
-            if entry.get("file_name") == file_name:
-                entry["text"] = new_text
-                entry["voice"] = new_voice
-                entry["params"] = new_params
-                updated = True
-                break
-
-        if updated:
-            with open(metadata_path, "w", encoding="utf-8") as f:
-                json.dump(data, f, indent=4, ensure_ascii=False)
-
-    except Exception as e:
-        print(f"Error updating metadata: {e}")
-
-
-def _extract_control_values(controls_ui: dict) -> dict:
-    return {k: v.value for k, v in controls_ui.items()}
-
-
-def _render_line_row(item: LineData, project_name: str, generator_callback):
+def render_line_row(item: acl.LineData, project_name: str, generator_callback):
     with ui.row().classes(Style.centered_row):
         ui.checkbox()
     ui.label(item.speaker).classes("text-center font-medium")
@@ -308,7 +99,7 @@ def _render_line_row(item: LineData, project_name: str, generator_callback):
                     )
                     shutil.move(candidate_state["path"], original_path)
 
-                    _update_metadata_entry(
+                    acl.update_metadata_entry(
                         project_name,
                         item.file_name,
                         text_input.value,
@@ -365,10 +156,12 @@ def _render_line_row(item: LineData, project_name: str, generator_callback):
                 regen_btn.set_visibility(True)
 
         regen_btn.on("click", on_regen_click)
+
     ui.number(value=item.pause, format="%.1f", step=0.1, min=0).classes("w-full").props(
         "outlined dense"
     ).on_value_change(lambda e: setattr(item, "pause", e.value))
-    current_limit = _get_current_model_max_chars()
+
+    current_limit = acl.get_current_model_max_chars()
     text_input = (
         ui.textarea(value=item.text)
         .props(f"rows=1 autogrow outlined dense maxlength='{current_limit}' counter")
@@ -378,8 +171,8 @@ def _render_line_row(item: LineData, project_name: str, generator_callback):
     ui.separator().classes("col-span-full")
 
 
-def _render_lines_grid(
-    container: ui.column, lines: List[LineData], project_name: str, regen_handler
+def render_lines_grid(
+    container: ui.column, lines: List[acl.LineData], project_name: str, regen_handler
 ):
     container.clear()
 
@@ -409,64 +202,29 @@ def _render_lines_grid(
             ui.separator().classes("my-1 col-span-full")
 
             for item in lines:
-                _render_line_row(item, project_name, regen_handler)
+                render_line_row(item, project_name, regen_handler)
 
 
-def _get_next_sequence_number(metadata_list: List[Dict], project_name: str) -> int:
-    max_num = 0
-    pattern = re.compile(rf"{re.escape(project_name)}_(\d+)")
-
-    for entry in metadata_list:
-        fname = entry.get("file_name", "")
-        match = pattern.search(fname)
-        if match:
-            num = int(match.group(1))
-            if num > max_num:
-                max_num = num
-
-    return max_num + 1
-
-
-def _generate_and_save_task(
-    text: str, voice_path: str, output_path: str, language: str, controls: dict
+def on_project_change(
+    event,
+    lines_container: ui.column,
+    regen_handler,
+    ui_lines: List[acl.LineData],
 ):
-    exaggeration = controls["exaggeration"]
-    temperature = controls["temperature"]
-    cfg_val = controls["cfg"]
-    seed_val = int(controls["seed"])
-    top_p_val = controls["top_p"]
-    min_p_val = controls["min_p"]
-    rep_penalty_val = controls["repetition_penalty"]
+    project_name = event.value
+    created = acl.ensure_project_exists(project_name=project_name)
+    if created:
+        ui.notify(f"Created new project: {project_name}", type="positive")
 
-    sr, audio_array = generate_tts_audio(
-        text_input=text,
-        language_id=language,
-        audio_prompt_path_input=voice_path,
-        exaggeration_input=exaggeration,
-        temperature_input=temperature,
-        seed_num_input=seed_val,
-        cfg_input=cfg_val,
-        repetition_penalty_input=rep_penalty_val,
-        min_p_input=min_p_val,
-        top_p_input=top_p_val,
-    )
-
-    wavfile.write(output_path, sr, audio_array)
-
-    return {
-        "language": language,
-        "temperature": temperature,
-        "exaggeration": exaggeration,
-        "cfg": cfg_val,
-        "seed": seed_val,
-        "top_p": top_p_val,
-        "min_p": min_p_val,
-        "repetition_penalty": rep_penalty_val,
-    }
+    acl.cleanup_temp_files(project_name)
+    new_lines = acl.load_project_metadata(project_name)
+    ui_lines.clear()
+    ui_lines.extend(new_lines)
+    render_lines_grid(lines_container, ui_lines, project_name, regen_handler)
 
 
-async def _process_audio_generation(
-    project_name: str, lines: List[LineData], controls_dict: dict, language: str
+async def process_audio_generation(
+    project_name: str, lines: List[acl.LineData], controls_dict: dict, language: str
 ):
     if not language:
         ui.notify("Please select a language before generating.", type="warning")
@@ -499,13 +257,13 @@ async def _process_audio_generation(
         except json.JSONDecodeError:
             metadata_list = []
 
-    current_index = _get_next_sequence_number(metadata_list, project_name)
+    current_index = acl.get_next_sequence_number(metadata_list, project_name)
 
     new_entries = []
 
     ui.notify(f"Starting generation of {len(lines)} lines...", type="info")
 
-    control_values = _extract_control_values(controls_dict)
+    control_values = extract_control_values(controls_dict)
 
     for line in lines:
         if not line.voice:
@@ -522,7 +280,7 @@ async def _process_audio_generation(
         try:
             # Call the wrapper function with values from UI
             generation_params = await run.io_bound(
-                _generate_and_save_task,
+                acl.generate_and_save_audio,
                 text=line.text,
                 voice_path=voice_path,
                 output_path=file_path,
@@ -569,7 +327,7 @@ async def generate_lines_list(
     controls_dict: dict,
     language_val: str,
     regen_handler,
-    ui_lines: List[LineData],
+    ui_lines: List[acl.LineData],
 ):
     if project_input.value is None:
         ui.notify("Missing project selection.", type="negative")
@@ -590,27 +348,32 @@ async def generate_lines_list(
             ui.notify("Missing single speaker voice.", type="negative")
             return
     elif speaker_list_container.visible:
-        voice_map = _get_voice_map_from_ui(speaker_list_container)
+        voice_map = get_voice_map_from_ui(speaker_list_container)
         if not voice_map:
             ui.notify("No speakers configured or voices missing.", type="negative")
+            return
 
-    max_chars = _get_current_model_max_chars()
-    parsed_lines = _parse_lines(
+    max_chars = acl.get_current_model_max_chars()
+    parsed_lines = acl.parse_lines(
         script, is_single_mode, single_voice_val, voice_map, max_chars
     )
     ui_lines.clear()
     ui_lines.extend(parsed_lines)
 
     try:
-        await _process_audio_generation(
+        await process_audio_generation(
             project_input.value, ui_lines, controls_dict, language_val
         )
     except Exception as e:
         ui.notify(f"Error generating audio: {str(e)}", type="negative")
         return
 
+    full_project_lines = acl.load_project_metadata(project_input.value)
+    ui_lines.clear()
+    ui_lines.extend(full_project_lines)
+
     lines_container.clear()
-    _render_lines_grid(lines_container, ui_lines, project_input.value, regen_handler)
+    render_lines_grid(lines_container, ui_lines, project_input.value, regen_handler)
 
 
 def confirm_delete_project(project_select: ui.select, lines_list_container: ui.column):
@@ -700,19 +463,6 @@ def reset_speakers(
     results_container.update()
 
 
-def remove_speaker(
-    row_to_remove: ui.row,
-    list_container: ui.column,
-    single_voice_select: ui.select,
-    results_container: ui.column,
-):
-    row_to_remove.delete()
-    list_container.update()
-
-    if not list_container.default_slot.children:
-        reset_speakers(list_container, single_voice_select, results_container)
-
-
 def speaker_row(
     speaker_name: str,
     label_classes: str = None,
@@ -741,67 +491,21 @@ def speaker_row(
 
     return profile_select
 
+def remove_speaker(
+    row_to_remove: ui.row,
+    list_container: ui.column,
+    single_voice_select: ui.select,
+    results_container: ui.column,
+):
+    row_to_remove.delete()
+    list_container.update()
 
-def _merge_and_save_audio(project_name: str, ui_lines: List[LineData]) -> Optional[str]:
-    if not ui_lines:
-        raise ValueError("No speaker lines available.")
-
-    if not project_name:
-        raise ValueError("No project selected.")
-
-    metadata_lines = _load_project_metadata(project_name)
-    if not metadata_lines:
-        raise ValueError("Project is empty or metadata missing.")
-
-    ui_pauses = {line.file_name: line.pause for line in ui_lines if line.file_name}
-    project_path = os.path.join(DEFAULT_PROJECT_DIRECTORY, project_name)
-
-    if not os.path.exists(DEFAULT_OUTPUT_DIRECTORY):
-        os.makedirs(DEFAULT_OUTPUT_DIRECTORY)
-
-    combined_audio = []
-    sample_rate = None
-
-    for line in metadata_lines:
-        if not line.file_name:
-            continue
-
-        file_path = os.path.join(project_path, line.file_name)
-        if not os.path.exists(file_path):
-            print(f"Skipping missing file: {line.file_name}")
-            continue
-
-        try:
-            sr, data = wavfile.read(file_path)
-
-            if sample_rate is None:
-                sample_rate = sr
-
-            combined_audio.append(data)
-            pause_duration = ui_pauses.get(line.file_name, line.pause)
-
-            if pause_duration > 0:
-                silence_samples = int(pause_duration * sample_rate)
-                if silence_samples > 0:
-                    silence = np.zeros(silence_samples, dtype=data.dtype)
-                    combined_audio.append(silence)
-
-        except Exception as e:
-            print(f"Error processing {line.file_name}: {e}")
-
-    if not combined_audio:
-        raise ValueError("No valid audio files found to merge.")
-
-    final_wave = np.concatenate(combined_audio)
-    output_filename = f"{project_name}_merged.wav"
-    output_path = os.path.join(DEFAULT_OUTPUT_DIRECTORY, output_filename)
-
-    wavfile.write(output_path, sample_rate, final_wave)
-    return output_filename
+    if not list_container.default_slot.children:
+        reset_speakers(list_container, single_voice_select, results_container)
 
 
 async def handle_merge_click(
-    project_select: ui.select, audio_player: ui.audio, current_ui_lines: List[LineData]
+    project_select: ui.select, audio_player: ui.audio, current_ui_lines: List[acl.LineData]
 ):
     project_name = project_select.value
     if not project_name:
@@ -811,7 +515,7 @@ async def handle_merge_click(
     ui.notify("Merging audio files...", type="info")
 
     result_filename = await run.io_bound(
-        _merge_and_save_audio, project_name, current_ui_lines
+        acl.merge_and_save_audio, project_name, current_ui_lines
     )
 
     if result_filename:
@@ -822,7 +526,7 @@ async def handle_merge_click(
 
 def audiobook_creation_tab(tab_object: ui.tab):
     app_state = get_state()
-    current_lines: List[LineData] = []
+    current_lines: List[acl.LineData] = []
 
     with ui.tab_panel(tab_object).classes("w-full p-0 m-0"):
         with ui.column().classes("w-full gap-6 p-6"):
@@ -830,13 +534,13 @@ def audiobook_creation_tab(tab_object: ui.tab):
                 ui.label("Project:").classes("font-semibold text-gray-700")
                 project_select = (
                     ui.select(
-                        options=get_existing_projects(),
+                        options=acl.get_existing_projects(),
                         label="Select folder / project name",
                         with_input=True,
                         on_change=lambda e: on_project_change(
                             e,
                             lines_list_container,
-                            row_generation_handler,
+                            row_generation_callback,
                             current_lines,
                         ),
                     )
@@ -929,7 +633,7 @@ def audiobook_creation_tab(tab_object: ui.tab):
                 with ui.column().classes("w-full"):
                     with ui.card().classes(Style.standard_border):
 
-                        async def row_generation_handler(
+                        async def row_generation_callback(
                             text, voice, original_filename
                         ):
                             if not language_select.value:
@@ -945,13 +649,13 @@ def audiobook_creation_tab(tab_object: ui.tab):
                             )
                             voice_path = os.path.join(DEFAULT_VOICE_LIBRARY, voice)
 
-                            ctrl_values = _extract_control_values(
+                            ctrl_values = extract_control_values(
                                 chatterbox_ui_controls
                             )
 
                             try:
                                 params = await run.io_bound(
-                                    _generate_and_save_task,
+                                    acl.generate_and_save_audio,
                                     text=text,
                                     voice_path=voice_path,
                                     output_path=temp_path,
@@ -978,7 +682,7 @@ def audiobook_creation_tab(tab_object: ui.tab):
                                     project_input=project_select,
                                     controls_dict=chatterbox_ui_controls,
                                     language_val=language_select.value,
-                                    regen_handler=row_generation_handler,
+                                    regen_handler=row_generation_callback,
                                     ui_lines=current_lines,
                                 ),
                             ).classes(Style.small_button + " flex-grow").props(
